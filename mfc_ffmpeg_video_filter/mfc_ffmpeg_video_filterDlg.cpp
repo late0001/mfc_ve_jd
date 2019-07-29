@@ -284,8 +284,31 @@ static int init_filters(const char *filters_descr)
 		return ret;
 	return 0;
 }
+#define SFP_REFRESH_EVENT	(SDL_USEREVENT + 1)
+#define SFP_BREAK_EVENT		(SDL_USEREVENT + 2)
+int thread_exit = 0;
+int thread_pause = 0;
+int sfp_refresh_thread(void *data) 
+{
+	thread_exit = 0;
+	thread_pause = 0;
+	while (thread_exit == 0) {
+		if (!thread_pause) {
+			SDL_Event event;
+			event.type = SFP_REFRESH_EVENT;
+			SDL_PushEvent(&event);
+		}
+		SDL_Delay(30);
+	}
+	SDL_Event event;
+	event.type = SFP_BREAK_EVENT;
+	SDL_PushEvent(&event);
+	thread_exit = 0;
+	thread_pause = 0;
+	return 0;
+}
 
-UINT ThreadProc(LPVOID lparam) 
+UINT ThreadPlayer(LPVOID lparam) 
 {
 	int ret;
 	AVPacket packet;
@@ -307,16 +330,13 @@ UINT ThreadProc(LPVOID lparam)
 #endif
 
 	SDL_Window *psdl_win;
-	//int iWidth = 0;
-	//int iHeight = 0;
-	//SDL_Rect    rect;
-	//SDL_GetWindowSize(psdl_win, &iWidth, &iHeight);
-	//SDL_SetWindowSize(psdl_win, pCodecCtx->width, pCodecCtx->height);
 	//SDL 2.0 Support for multiple windows
 	int screen_w, screen_h;
 	screen_w = pCodecCtx->width;
 	screen_h = pCodecCtx->height;
-	SDL_Rect rect, rect1;
+	SDL_Rect rect, rect1/*, rect2*/;
+	SDL_Thread *video_tid;
+	SDL_Event event;
 	CMFC_ffmpeg_video_filterDlg *filterDlg = (CMFC_ffmpeg_video_filterDlg *)lparam;
 	//psdl_win = SDL_CreateWindow("Simplest ffmpeg player's Window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
 	//	screen_w, screen_h, SDL_WINDOW_OPENGL);
@@ -327,86 +347,101 @@ UINT ThreadProc(LPVOID lparam)
 
 	//创建纹理
 	SDL_Texture * pTexture = SDL_CreateTexture(pRender, SDL_PIXELFORMAT_YV12, SDL_TEXTUREACCESS_STREAMING, pCodecCtx->width, pCodecCtx->height);
-	//SDL_Texture * pTexture1 = SDL_CreateTexture(pRender, SDL_PIXELFORMAT_YV12, SDL_TEXTUREACCESS_STREAMING, pCodecCtx->width, pCodecCtx->height);
-	
+	video_tid = SDL_CreateThread(sfp_refresh_thread, NULL, NULL);
 	pFrame = av_frame_alloc();
 	pFrame_out = av_frame_alloc();
 	/* read all packets */
 	while (1) {
-
-		ret = av_read_frame(pFormatCtx, &packet);
-		if (ret < 0)
-			break;
-
-		if (packet.stream_index == video_stream_index) {
-			got_frame = 0;
-			ret = avcodec_decode_video2(pCodecCtx, pFrame, &got_frame, &packet);
+		SDL_WaitEvent(&event);
+		if (event.type == SFP_REFRESH_EVENT) {
+			ret = av_read_frame(pFormatCtx, &packet);
 			if (ret < 0) {
-				sprintf_s(logbuf, "Error decoding video\n");
-				logd(logbuf);
-				break;
+				thread_exit = 1; //sfp_refresh_thread线程会触发 SFP_BREAK_EVENT事件;
+				continue;//break;
 			}
 
-			if (got_frame) {
-				pFrame->pts = av_frame_get_best_effort_timestamp(pFrame);
-
-				/* push the decoded frame into the filtergraph */
-				if (av_buffersrc_add_frame(buffersrc_ctx, pFrame) < 0) {
-					sprintf_s(logbuf, "Error while feeding the filtergraph\n");
+			if (packet.stream_index == video_stream_index) {
+				got_frame = 0;
+				ret = avcodec_decode_video2(pCodecCtx, pFrame, &got_frame, &packet);
+				if (ret < 0) {
+					sprintf_s(logbuf, "Error decoding video\n");
 					logd(logbuf);
 					break;
 				}
 
-				/* pull filtered pictures from the filtergraph */
-				while (1) {
+				if (got_frame) {
+					pFrame->pts = av_frame_get_best_effort_timestamp(pFrame);
 
-					ret = av_buffersink_get_frame(buffersink_ctx, pFrame_out);
-					if (ret < 0)
+					/* push the decoded frame into the filtergraph */
+					if (av_buffersrc_add_frame(buffersrc_ctx, pFrame) < 0) {
+						sprintf_s(logbuf, "Error while feeding the filtergraph\n");
+						logd(logbuf);
 						break;
+					}
 
-					sprintf_s(logbuf, "Process 1 frame!\n");
-					logd(logbuf);
+					/* pull filtered pictures from the filtergraph */
+					while (1) {
+						ret = av_buffersink_get_frame(buffersink_ctx, pFrame_out);
+						if (ret < 0) {
+							break;
+						}
 
-					if (pFrame_out->format == AV_PIX_FMT_YUV420P) {
+
+						sprintf_s(logbuf, "Process 1 frame!\n");
+						logd(logbuf);
+
+						if (pFrame_out->format == AV_PIX_FMT_YUV420P) {
 #if ENABLE_YUVFILE
-						//Y, U, V
-						for (int i = 0; i < pFrame_out->height; i++) {
-							fwrite(pFrame_out->data[0] + pFrame_out->linesize[0] * i, 1, pFrame_out->width, fp_yuv);
-						}
-						for (int i = 0; i < pFrame_out->height / 2; i++) {
-							fwrite(pFrame_out->data[1] + pFrame_out->linesize[1] * i, 1, pFrame_out->width / 2, fp_yuv);
-						}
-						for (int i = 0; i < pFrame_out->height / 2; i++) {
-							fwrite(pFrame_out->data[2] + pFrame_out->linesize[2] * i, 1, pFrame_out->width / 2, fp_yuv);
-						}
+							//Y, U, V
+							for (int i = 0; i < pFrame_out->height; i++) {
+								fwrite(pFrame_out->data[0] + pFrame_out->linesize[0] * i, 1, pFrame_out->width, fp_yuv);
+							}
+							for (int i = 0; i < pFrame_out->height / 2; i++) {
+								fwrite(pFrame_out->data[1] + pFrame_out->linesize[1] * i, 1, pFrame_out->width / 2, fp_yuv);
+							}
+							for (int i = 0; i < pFrame_out->height / 2; i++) {
+								fwrite(pFrame_out->data[2] + pFrame_out->linesize[2] * i, 1, pFrame_out->width / 2, fp_yuv);
+							}
 #endif
-						//SaveYuvFrame(pFrame_out, pCodecCtx->width, pCodecCtx->height);
+							//SaveYuvFrame(pFrame_out, pCodecCtx->width, pCodecCtx->height);
 
-						rect.x = 0;
-						rect.y = 0;
-						rect.w = screen_w/2;//pFrame_out->width;
-						rect.h = screen_h/2;// pFrame_out->height;
-						rect1.x = screen_w / 2;
-						rect1.y = screen_h / 2;
-						rect1.w = screen_w / 2;//pFrame_out->width;
-						rect1.h = screen_h / 2;// pFrame_out->height;
-						SDL_UpdateYUVTexture(pTexture, NULL, pFrame_out->data[0], pFrame_out->linesize[0],
-							pFrame_out->data[1], pFrame_out->linesize[1],
-							pFrame_out->data[2], pFrame_out->linesize[2]);
-						SDL_RenderClear(pRender);
-						SDL_RenderCopy(pRender, pTexture, NULL, &rect);
-						SDL_RenderCopy(pRender, pTexture, NULL, &rect1);
-						SDL_RenderPresent(pRender);
+							rect.x = 0;
+							rect.y = 0;
+							rect.w = screen_w / 2;//pFrame_out->width;
+							rect.h = screen_h / 2;// pFrame_out->height;
+							rect1.x = screen_w / 2;
+							rect1.y = screen_h / 2;
+							rect1.w = screen_w / 2;//pFrame_out->width;
+							rect1.h = screen_h / 2;// pFrame_out->height;
+							//rect2.x = 0;
+							//rect2.y = screen_h / 2;
+							//rect2.w = screen_w / 2;
+							//rect2.h = screen_h / 2;
+							SDL_UpdateYUVTexture(pTexture, NULL, pFrame_out->data[0], pFrame_out->linesize[0],
+								pFrame_out->data[1], pFrame_out->linesize[1],
+								pFrame_out->data[2], pFrame_out->linesize[2]);
+							SDL_RenderClear(pRender);
+							SDL_RenderCopy(pRender, pTexture, NULL, &rect);
+							SDL_RenderCopy(pRender, pTexture, NULL, &rect1);
+							//SDL_RenderCopy(pRender, pTexture, NULL, &rect2);
+							SDL_RenderPresent(pRender);
 
-						SDL_Delay(40);
+							//SDL_Delay(40);
 						}
-					av_frame_unref(pFrame_out);
+						av_frame_unref(pFrame_out);
 					}
 				}
-			av_frame_unref(pFrame);
+				av_frame_unref(pFrame);
 			}
-		av_free_packet(&packet);
+			av_free_packet(&packet);
 		}
+		else if (event.type == SDL_QUIT) {
+			thread_exit = 1;
+		}
+		else if (event.type == SFP_BREAK_EVENT) {
+			break;
+		}
+	}
 #if ENABLE_YUVFILE
 	fclose(fp_yuv);
 #endif
@@ -430,7 +465,6 @@ end:
 void CMFC_ffmpeg_video_filterDlg::OnBnClickedBtnPlay()
 {
 	// TODO: 在此添加控件通知处理程序代码
-	LPVOID lparam = NULL; //sdl_win;
-	lparam = this;
-	AfxBeginThread(ThreadProc, lparam);
+
+	AfxBeginThread(ThreadPlayer, this);
 }
