@@ -20,9 +20,10 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{C2DB1F5E-CFFF-472F-B80F-EFDB21CCBD48}</ProjectGuid>
-    <RootNamespace>mfc_ffmpeg_video_filter</RootNamespace>
+    <RootNamespace>mfc_ffmpeg_streamer</RootNamespace>
     <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
     <Keyword>MFCProj</Keyword>
+    <ProjectName>mfc_ffmpeg_streamer</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -188,15 +189,15 @@
     <Text Include="ReadMe.txt" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="mfc_ffmpeg_video_filter.h" />
-    <ClInclude Include="mfc_ffmpeg_video_filterDlg.h" />
+    <ClInclude Include="mfc_ffmpeg_streamer.h" />
+    <ClInclude Include="mfc_ffmpeg_streamerDlg.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="mfc_ffmpeg_video_filter.cpp" />
-    <ClCompile Include="mfc_ffmpeg_video_filterDlg.cpp" />
+    <ClCompile Include="mfc_ffmpeg_streamer.cpp" />
+    <ClCompile Include="mfc_ffmpeg_streamerDlg.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
@@ -205,13 +206,13 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="mfc_ffmpeg_video_filter.rc" />
+    <ResourceCompile Include="mfc_ffmpeg_streamer.rc" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="res\mfc_ffmpeg_video_filter.rc2" />
+    <None Include="res\mfc_ffmpeg_streamer.rc2" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="res\mfc_ffmpeg_video_filter.ico" />
+    <Image Include="res\mfc_ffmpeg_streamer.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

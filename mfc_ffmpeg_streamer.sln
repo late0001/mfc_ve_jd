@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
 VisualStudioVersion = 14.0.25420.1
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "mfc_ffmpeg_video_filter", "mfc_ffmpeg_video_filter\mfc_ffmpeg_video_filter.vcxproj", "{C2DB1F5E-CFFF-472F-B80F-EFDB21CCBD48}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "mfc_ffmpeg_streamer", "mfc_ffmpeg_streamer\mfc_ffmpeg_streamer.vcxproj", "{C2DB1F5E-CFFF-472F-B80F-EFDB21CCBD48}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

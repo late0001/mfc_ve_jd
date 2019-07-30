@@ -19,12 +19,12 @@ extern "C" {
 
 
 // CMFC_ffmpeg_video_filterDlg 对话框
-class CMFC_ffmpeg_video_filterDlg : public CDialogEx
+class CMFC_ffmpeg_streamerDlg : public CDialogEx
 {
 // 构造
 public:
 	SDL_Window *sdl_win;
-	CMFC_ffmpeg_video_filterDlg(CWnd* pParent = NULL);	// 标准构造函数
+	CMFC_ffmpeg_streamerDlg(CWnd* pParent = NULL);	// 标准构造函数
 // 对话框数据
 #ifdef AFX_DESIGN_TIME
 	enum { IDD = IDD_MFC_FFMPEG_VIDEO_FILTER_DIALOG };

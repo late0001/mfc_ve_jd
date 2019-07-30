@@ -3,8 +3,8 @@
 //
 
 #include "stdafx.h"
-#include "mfc_ffmpeg_video_filter.h"
-#include "mfc_ffmpeg_video_filterDlg.h"
+#include "mfc_ffmpeg_streamer.h"
+#include "mfc_ffmpeg_streamerDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -13,14 +13,14 @@
 
 // CMFC_ffmpeg_video_filterApp
 
-BEGIN_MESSAGE_MAP(CMFC_ffmpeg_video_filterApp, CWinApp)
+BEGIN_MESSAGE_MAP(CMFC_ffmpeg_streamerApp, CWinApp)
 	ON_COMMAND(ID_HELP, &CWinApp::OnHelp)
 END_MESSAGE_MAP()
 
 
 // CMFC_ffmpeg_video_filterApp 构造
 
-CMFC_ffmpeg_video_filterApp::CMFC_ffmpeg_video_filterApp()
+CMFC_ffmpeg_streamerApp::CMFC_ffmpeg_streamerApp()
 {
 	// 支持重新启动管理器
 	m_dwRestartManagerSupportFlags = AFX_RESTART_MANAGER_SUPPORT_RESTART;
@@ -32,12 +32,12 @@ CMFC_ffmpeg_video_filterApp::CMFC_ffmpeg_video_filterApp()
 
 // 唯一的一个 CMFC_ffmpeg_video_filterApp 对象
 
-CMFC_ffmpeg_video_filterApp theApp;
+CMFC_ffmpeg_streamerApp theApp;
 
 
 // CMFC_ffmpeg_video_filterApp 初始化
 
-BOOL CMFC_ffmpeg_video_filterApp::InitInstance()
+BOOL CMFC_ffmpeg_streamerApp::InitInstance()
 {
 	// 如果一个运行在 Windows XP 上的应用程序清单指定要
 	// 使用 ComCtl32.dll 版本 6 或更高版本来启用可视化方式，
@@ -70,7 +70,7 @@ BOOL CMFC_ffmpeg_video_filterApp::InitInstance()
 	// 例如修改为公司或组织名
 	SetRegistryKey(_T("应用程序向导生成的本地应用程序"));
 
-	CMFC_ffmpeg_video_filterDlg dlg;
+	CMFC_ffmpeg_streamerDlg dlg;
 	m_pMainWnd = &dlg;
 	INT_PTR nResponse = dlg.DoModal();
 	if (nResponse == IDOK)

@@ -4,8 +4,8 @@
 
 #include "stdafx.h"
 #include <stdio.h>
-#include "mfc_ffmpeg_video_filter.h"
-#include "mfc_ffmpeg_video_filterDlg.h"
+#include "mfc_ffmpeg_streamer.h"
+#include "mfc_ffmpeg_streamerDlg.h"
 #include "afxdialogex.h"
 
 #ifdef _DEBUG
@@ -54,28 +54,28 @@ END_MESSAGE_MAP()
 
 
 
-CMFC_ffmpeg_video_filterDlg::CMFC_ffmpeg_video_filterDlg(CWnd* pParent /*=NULL*/)
-	: CDialogEx(IDD_MFC_FFMPEG_VIDEO_FILTER_DIALOG, pParent)
+CMFC_ffmpeg_streamerDlg::CMFC_ffmpeg_streamerDlg(CWnd* pParent /*=NULL*/)
+	: CDialogEx(IDD_MFC_FFMPEG_STREAMER_DIALOG, pParent)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
 
-void CMFC_ffmpeg_video_filterDlg::DoDataExchange(CDataExchange* pDX)
+void CMFC_ffmpeg_streamerDlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialogEx::DoDataExchange(pDX);
 }
 
-BEGIN_MESSAGE_MAP(CMFC_ffmpeg_video_filterDlg, CDialogEx)
+BEGIN_MESSAGE_MAP(CMFC_ffmpeg_streamerDlg, CDialogEx)
 	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
 	ON_WM_QUERYDRAGICON()
-	ON_BN_CLICKED(ID_BTN_PLAY, &CMFC_ffmpeg_video_filterDlg::OnBnClickedBtnPlay)
+	ON_BN_CLICKED(ID_BTN_PLAY, &CMFC_ffmpeg_streamerDlg::OnBnClickedBtnPlay)
 END_MESSAGE_MAP()
 
 
 // CMFC_ffmpeg_video_filterDlg 消息处理程序
 
-BOOL CMFC_ffmpeg_video_filterDlg::OnInitDialog()
+BOOL CMFC_ffmpeg_streamerDlg::OnInitDialog()
 {
 	CDialogEx::OnInitDialog();
 
@@ -112,7 +112,7 @@ BOOL CMFC_ffmpeg_video_filterDlg::OnInitDialog()
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
 
-void CMFC_ffmpeg_video_filterDlg::OnSysCommand(UINT nID, LPARAM lParam)
+void CMFC_ffmpeg_streamerDlg::OnSysCommand(UINT nID, LPARAM lParam)
 {
 	if ((nID & 0xFFF0) == IDM_ABOUTBOX)
 	{
@@ -129,7 +129,7 @@ void CMFC_ffmpeg_video_filterDlg::OnSysCommand(UINT nID, LPARAM lParam)
 //  来绘制该图标。  对于使用文档/视图模型的 MFC 应用程序，
 //  这将由框架自动完成。
 
-void CMFC_ffmpeg_video_filterDlg::OnPaint()
+void CMFC_ffmpeg_streamerDlg::OnPaint()
 {
 	if (IsIconic())
 	{
@@ -156,14 +156,14 @@ void CMFC_ffmpeg_video_filterDlg::OnPaint()
 
 //当用户拖动最小化窗口时系统调用此函数取得光标
 //显示。
-HCURSOR CMFC_ffmpeg_video_filterDlg::OnQueryDragIcon()
+HCURSOR CMFC_ffmpeg_streamerDlg::OnQueryDragIcon()
 {
 	return static_cast<HCURSOR>(m_hIcon);
 }
 
 
 
-BOOL CMFC_ffmpeg_video_filterDlg::DestroyWindow()
+BOOL CMFC_ffmpeg_streamerDlg::DestroyWindow()
 {
 	// TODO: 在此添加专用代码和/或调用基类
 	SDL_DestroyWindow(sdl_win);
@@ -337,7 +337,7 @@ UINT ThreadPlayer(LPVOID lparam)
 	SDL_Rect rect, rect1/*, rect2*/;
 	SDL_Thread *video_tid;
 	SDL_Event event;
-	CMFC_ffmpeg_video_filterDlg *filterDlg = (CMFC_ffmpeg_video_filterDlg *)lparam;
+	CMFC_ffmpeg_streamerDlg *filterDlg = (CMFC_ffmpeg_streamerDlg *)lparam;
 	//psdl_win = SDL_CreateWindow("Simplest ffmpeg player's Window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
 	//	screen_w, screen_h, SDL_WINDOW_OPENGL);
 	//SDL_SetWindowSize(psdl_win, screen_w, screen_h);
@@ -462,7 +462,7 @@ end:
 	return 0;
 }
 
-void CMFC_ffmpeg_video_filterDlg::OnBnClickedBtnPlay()
+void CMFC_ffmpeg_streamerDlg::OnBnClickedBtnPlay()
 {
 	// TODO: 在此添加控件通知处理程序代码
 

@@ -15,10 +15,10 @@
 // 有关此类的实现，请参阅 mfc_ffmpeg_video_filter.cpp
 //
 
-class CMFC_ffmpeg_video_filterApp : public CWinApp
+class CMFC_ffmpeg_streamerApp : public CWinApp
 {
 public:
-	CMFC_ffmpeg_video_filterApp();
+	CMFC_ffmpeg_streamerApp();
 
 // 重写
 public:
@@ -29,4 +29,4 @@ public:
 	DECLARE_MESSAGE_MAP()
 };
 
-extern CMFC_ffmpeg_video_filterApp theApp;
+extern CMFC_ffmpeg_streamerApp theApp;
