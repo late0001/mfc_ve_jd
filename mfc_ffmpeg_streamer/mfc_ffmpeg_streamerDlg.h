@@ -10,6 +10,8 @@ extern "C" {
 #include <libavfilter/buffersink.h>
 #include <libavfilter/buffersrc.h>
 #include <libavutil/avutil.h>
+#include "libavutil/mathematics.h"
+#include "libavutil/time.h"
 #include <libswscale/swscale.h>
 #include <sdl/sdl.h>
 #ifdef __cplusplus
@@ -27,7 +29,7 @@ public:
 	CMFC_ffmpeg_streamerDlg(CWnd* pParent = NULL);	// 标准构造函数
 // 对话框数据
 #ifdef AFX_DESIGN_TIME
-	enum { IDD = IDD_MFC_FFMPEG_VIDEO_FILTER_DIALOG };
+	enum { IDD = IDD_MFC_FFMPEG_STREAMER_DIALOG };
 #endif
 
 	protected:
@@ -37,6 +39,7 @@ public:
 // 实现
 protected:
 	HICON m_hIcon;
+	CStatusBar m_statusbar;
 	// 生成的消息映射函数
 	virtual BOOL OnInitDialog();
 	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
@@ -44,6 +47,11 @@ protected:
 	afx_msg HCURSOR OnQueryDragIcon();
 	DECLARE_MESSAGE_MAP()
 public:
+	//int SetStatusMessage(CString str);
 	virtual BOOL DestroyWindow();
 	afx_msg void OnBnClickedBtnPlay();
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	int SetStatusMessage(wchar_t *buf);
+protected:
+	afx_msg LRESULT OnUserMsg1(WPARAM wParam, LPARAM lParam);
 };
