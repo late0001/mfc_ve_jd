@@ -51,7 +51,7 @@ public:
 	virtual BOOL DestroyWindow();
 	afx_msg void OnBnClickedBtnPlay();
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
-	int SetStatusMessage(wchar_t *buf);
+	int SetStatusMessage(char *buf);
 protected:
 	afx_msg LRESULT OnUserMsg1(WPARAM wParam, LPARAM lParam);
 };

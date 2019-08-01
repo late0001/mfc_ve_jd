@@ -222,9 +222,8 @@ int push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 	int videoindex = -1;
 	int frame_index = 0;
 	int64_t start_time = 0;
-	wchar_t  temp_buf[255];
-	wchar_t  temp_buf_w[255];
-	char ansi_buf[255];
+	char temp_buf[255];
+
 	//in_filename  = "cuc_ieschool.mov";
 	//in_filename  = "cuc_ieschool.mkv";
 	//in_filename  = "cuc_ieschool.ts";
@@ -233,7 +232,7 @@ int push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 	in_filename = "cuc_ieschool.flv";//输入URL（Input file URL）
     //in_filename  = "shanghai03_p.h264";
 
-	out_filename = "rtmp://192.168.0.101:1935/cctvf/zm";//输出 URL（Output URL）[RTMP]
+	out_filename = "rtmp://192.168.0.104:1935/cctvf/zm";//输出 URL（Output URL）[RTMP]
 	//out_filename = "rtp://233.233.233.233:6666";//输出 URL（Output URL）[UDP]
 	FILE *plogfile = fopen(pSzLogFileName, "wb+");
 	fclose(plogfile);
@@ -242,11 +241,11 @@ int push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 	avformat_network_init();
 	//输入（Input）
 	if ((ret = avformat_open_input(&ifmt_ctx, in_filename, 0, 0)) < 0) {
-		AfxMessageBox(L"Could not open input file.");
+		AfxMessageBox("Could not open input file.");
 		goto end;
 	}
 	if ((ret = avformat_find_stream_info(ifmt_ctx, 0)) < 0) {
-		AfxMessageBox(L"Failed to retrieve input stream information");
+		AfxMessageBox("Failed to retrieve input stream information");
 		goto end;
 	}
 
@@ -264,7 +263,7 @@ int push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 	//avformat_alloc_output_context2(&ofmt_ctx, NULL, "mpegts", out_filename);//UDP
 
 	if (!ofmt_ctx) {
-		AfxMessageBox(L"Could not create output context");
+		AfxMessageBox("Could not create output context");
 		ret = AVERROR_UNKNOWN;
 		goto end;
 	}
@@ -274,14 +273,14 @@ int push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 		AVStream *in_stream = ifmt_ctx->streams[i];
 		AVStream *out_stream = avformat_new_stream(ofmt_ctx, in_stream->codec->codec);
 		if (!out_stream) {
-			AfxMessageBox(L"Failed allocating output stream");
+			AfxMessageBox("Failed allocating output stream");
 			ret = AVERROR_UNKNOWN;
 			goto end;
 		}
 		//复制AVCodecContext的设置（Copy the settings of AVCodecContext）
 		ret = avcodec_copy_context(out_stream->codec, in_stream->codec);
 		if (ret < 0) {
-			AfxMessageBox(L"Failed to copy context from input to output stream codec context");
+			AfxMessageBox("Failed to copy context from input to output stream codec context");
 			goto end;
 		}
 		out_stream->codec->codec_tag = 0;
@@ -294,8 +293,9 @@ int push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 	if (!(ofmt->flags & AVFMT_NOFILE)) {
 		ret = avio_open(&ofmt_ctx->pb, out_filename, AVIO_FLAG_WRITE);
 		if (ret < 0) {
-			MultiByteToWideChar(CP_ACP, 0, out_filename, strlen(out_filename) + 1, temp_buf_w, 255);
-			swprintf_s(temp_buf, L"Could not open output URL '%s'", temp_buf_w);
+			//MultiByteToWideChar(CP_ACP, 0, out_filename, strlen(out_filename) + 1, temp_buf_w, 255);
+			sprintf(temp_buf, "Could not open output URL '%s'", out_filename);
+			//WideCharToMultiByte(CP_ACP, 0, temp_buf, wcslen(temp_buf) + 1, ansi_buf, 255, 0, 0);
 			AfxMessageBox(temp_buf);
 			goto end;
 		}
@@ -303,7 +303,7 @@ int push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 	//写文件头（Write file header）
 	ret = avformat_write_header(ofmt_ctx, NULL);
 	if (ret < 0) {
-		AfxMessageBox(L"Error occurred when opening output URL\n");
+		AfxMessageBox("Error occurred when opening output URL\n");
 		goto end;
 	}
 
@@ -347,10 +347,10 @@ int push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 		pkt.pos = -1;
 		//Print to Screen
 		if (pkt.stream_index == videoindex) {
-			swprintf_s(temp_buf, L"Send %8d video frames to output URL\n", frame_index);
+			sprintf(temp_buf, "Send %8d video frames to output URL\n", frame_index);
 			//memset(ansi_buf, 0, 255);
-			WideCharToMultiByte(CP_ACP, 0, temp_buf, wcslen(temp_buf)+1, ansi_buf, 255, 0, 0);
-			logd(ansi_buf);
+			//WideCharToMultiByte(CP_ACP, 0, temp_buf, wcslen(temp_buf)+1, ansi_buf, 255, 0, 0);
+			logd(temp_buf);
 			pdlg->SetStatusMessage(temp_buf);
 			frame_index++;
 		}
@@ -358,7 +358,7 @@ int push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 		ret = av_interleaved_write_frame(ofmt_ctx, &pkt);
 
 		if (ret < 0) {
-			AfxMessageBox(L"Error muxing packet\n");
+			AfxMessageBox("Error muxing packet\n");
 			break;
 		}
 
@@ -374,10 +374,10 @@ end:
 		avio_close(ofmt_ctx->pb);
 	avformat_free_context(ofmt_ctx);
 	if (ret < 0 && ret != AVERROR_EOF) {
-		AfxMessageBox(L"Error occurred.\n");
+		AfxMessageBox("Error occurred.\n");
 		return -1;
 	}
-	AfxMessageBox(L"push stream end!");
+	AfxMessageBox("push stream end!");
 
 	return 0;
 }
@@ -514,7 +514,6 @@ int mffmpeg_player(CMFC_ffmpeg_streamerDlg *filterDlg)
 
 	av_register_all();
 	avfilter_register_all();
-
 	if ((ret = open_input_file("cuc_ieschool.flv")) < 0)
 		goto end;
 	if ((ret = init_filters(filter_descr)) < 0)
@@ -524,7 +523,7 @@ int mffmpeg_player(CMFC_ffmpeg_streamerDlg *filterDlg)
 	FILE *fp_yuv = fopen("test.yuv", "wb+");
 #endif
 
-	SDL_Window *psdl_win;
+	SDL_Window *psdl_win ;
 	//SDL 2.0 Support for multiple windows
 	int screen_w, screen_h;
 	screen_w = pCodecCtx->width;
@@ -532,11 +531,12 @@ int mffmpeg_player(CMFC_ffmpeg_streamerDlg *filterDlg)
 	SDL_Rect rect, rect1/*, rect2*/;
 	SDL_Thread *video_tid;
 	SDL_Event event;
-	
 	//psdl_win = SDL_CreateWindow("Simplest ffmpeg player's Window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
 	//	screen_w, screen_h, SDL_WINDOW_OPENGL);
 	//SDL_SetWindowSize(psdl_win, screen_w, screen_h);
 	psdl_win = filterDlg->sdl_win;
+	sprintf(logbuf, " win: 0x%p", psdl_win);
+	filterDlg->SetStatusMessage(logbuf);
 	SDL_GetWindowSize(psdl_win, &screen_w, &screen_h);
 	SDL_Renderer * pRender = SDL_CreateRenderer(psdl_win, -1, 0);// 0, SDL_RENDERER_ACCELERATED);
 
@@ -552,7 +552,7 @@ int mffmpeg_player(CMFC_ffmpeg_streamerDlg *filterDlg)
 			ret = av_read_frame(pFormatCtx, &packet);
 			if (ret < 0) {
 				thread_exit = 1; //sfp_refresh_thread线程会触发 SFP_BREAK_EVENT事件;
-				continue;//break;
+				break;//continue;//
 			}
 
 			if (packet.stream_index == video_stream_index) {
@@ -645,8 +645,17 @@ end:
 	if (pCodecCtx)
 		avcodec_close(pCodecCtx);
 	avformat_close_input(&pFormatCtx);
-
-
+	filterDlg->SetStatusMessage("close input file");
+	SDL_DestroyTexture(pTexture);
+	SDL_DestroyRenderer(pRender);
+	//让控制线程退出
+	thread_exit = 1;
+	int status = 0;
+	if(video_tid>0)
+		SDL_WaitThread(video_tid, &status);
+	//吃掉线程退出产生的事件
+	SDL_WaitEvent(&event);
+	filterDlg->SetStatusMessage("Refresh Thread exit");
 	if (ret < 0 && ret != AVERROR_EOF) {
 		char buf[1024];
 		av_strerror(ret, buf, sizeof(buf));
@@ -682,10 +691,10 @@ void CMFC_ffmpeg_streamerDlg::OnTimer(UINT_PTR nIDEvent)
 }
 
 
-int  CMFC_ffmpeg_streamerDlg::SetStatusMessage(wchar_t *buf)
+int  CMFC_ffmpeg_streamerDlg::SetStatusMessage(char *buf)
 {
 	//m_statusbar.SetPaneText(0, _T("chifan"));
-	SendMessageW(WM_USER_MSG1, 0, (LPARAM)buf);
+	SendMessage(WM_USER_MSG1, 0, (LPARAM)buf);
 	return 0;
 }
 
