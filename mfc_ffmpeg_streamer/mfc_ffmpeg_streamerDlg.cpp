@@ -381,6 +381,272 @@ end:
 
 	return 0;
 }
+int exit_thraad = 0;
+int getcapdev_push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
+{
+	AVOutputFormat *ofmt = NULL;
+	//输入对应一个AVFormatContext，输出对应一个AVFormatContext
+	//（Input AVFormatContext and Output AVFormatContext）
+	AVFormatContext *ifmt_ctx = NULL, *ofmt_ctx = NULL;
+	AVCodec *pdeCodex = NULL, *penCodec = NULL;
+	//AVCodecContext *piCodecCtx = NULL;
+	AVCodecContext *pCodecCtx = NULL;
+	AVPacket *dec_pkt, enc_pkt;
+	AVFrame *pFrame, *pFrameYUV;
+	int dec_got_frame, enc_got_frame;
+	const char *in_filename, *out_filename;
+	int ret, i;
+	int videoindex = -1;
+	int frame_index = 0;
+	int64_t start_time = 0;
+	char temp_buf[255];
+	char device_name[50];
+	struct SwsContext *img_convert_ctx;
+
+	in_filename = "cuc_ieschool.flv";//输入URL（Input file URL）
+
+	out_filename = "rtmp://192.168.0.104:1935/cctvf/zm";//输出 URL（Output URL）[RTMP]
+	//out_filename = "rtp://233.233.233.233:6666";//输出 URL（Output URL）[UDP]
+	FILE *plogfile = fopen(pSzLogFileName, "wb+");
+	fclose(plogfile);
+	av_register_all();
+	avdevice_register_all();
+	//Network
+	avformat_network_init();
+
+	ifmt_ctx = avformat_alloc_context();
+	AVDeviceInfoList *device_info = NULL;
+	AVDictionary* options = NULL;
+	av_dict_set(&options, "list_devices", "true", 0);
+	AVInputFormat *iformat = av_find_input_format("dshow");
+	logd("Device Info=============\n");
+	//avformat_open_input(&ifmt_ctx, "video=dummy", iformat, &options);
+	logd("========================\n");
+
+	sprintf(device_name, "video=%s", "LHT-820VM31B");
+	//输入（Input）
+	if (avformat_open_input(&ifmt_ctx, device_name, iformat, 0) < 0) {
+		AfxMessageBox("Could not open input stream.");
+		goto end;
+	}
+	if (avformat_find_stream_info(ifmt_ctx, 0) < 0) {
+		AfxMessageBox("Failed to retrieve input stream information");
+		goto end;
+	}
+
+	for (i = 0; i < ifmt_ctx->nb_streams; i++)
+		if (ifmt_ctx->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
+			videoindex = i;
+			break;
+		}
+	if (videoindex == -1) {
+		AfxMessageBox("Couldn't find a video stream.(没有找到视频流)");
+		goto end;
+	}
+	av_dump_format(ifmt_ctx, 0, in_filename, 0);
+
+	//输出（Output）
+	pdeCodex = avcodec_find_decoder(ifmt_ctx->streams[videoindex]->codec->codec_id);
+	if(pdeCodex == NULL){
+		AfxMessageBox("Couldn't find decoder.");
+		goto end;
+	}
+	if (avcodec_open2(ifmt_ctx->streams[videoindex]->codec, pdeCodex, NULL) < 0) {
+		AfxMessageBox("Could not open codec.");
+		goto end;
+	}
+
+	avformat_alloc_output_context2(&ofmt_ctx, NULL, "flv", out_filename); //RTMP
+	//avformat_alloc_output_context2(&ofmt_ctx, NULL, "mpegts", out_filename);//UDP
+	if (!ofmt_ctx) {
+		AfxMessageBox("Could not create output context");
+		ret = AVERROR_UNKNOWN;
+		goto end;
+	}
+	// output encoder initialize
+	penCodec = avcodec_find_encoder(AV_CODEC_ID_H264);
+	if (!penCodec) {
+		AfxMessageBox("could not find encoder!");
+		goto end;
+	}
+	pCodecCtx = avcodec_alloc_context3(penCodec);
+	pCodecCtx->pix_fmt = PIX_FMT_YUV420P;
+	pCodecCtx->width = ifmt_ctx->streams[videoindex]->codec->width;
+	pCodecCtx->height = ifmt_ctx->streams[videoindex]->codec->height;
+	pCodecCtx->time_base.num = 1;
+	pCodecCtx->time_base.den = 25;
+	pCodecCtx->bit_rate = 400000;
+	pCodecCtx->gop_size = 250;
+	/* Some formats, for example flv, want stream headers to be separate. */
+	if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
+		pCodecCtx->flags |= CODEC_FLAG_GLOBAL_HEADER;
+	//H264 codec param
+	//pCodecCtx->me_range = 16;
+	//pCodecCtx->max_qdiff = 4;
+	//pCodecCtx->qcompress = 0.6;
+	pCodecCtx->qmin = 10;
+	pCodecCtx->qmax = 51;
+	//Optional Param
+	pCodecCtx->max_b_frames = 3;
+	//Set H264 preset and tune
+	AVDictionary *param = 0;
+	av_dict_set(&param, "preset", "fast", 0);
+	av_dict_set(&param, "tune", "zerolatency", 0);
+	ret = avcodec_open2(pCodecCtx, penCodec, &param);
+	if ( ret < 0) {
+		AfxMessageBox("Failed to open encoder!");
+		goto end;
+	}
+#if 0
+	ofmt = ofmt_ctx->oformat;
+	for (i = 0; i < ifmt_ctx->nb_streams; i++) {
+		//根据输入流创建输出流（Create output AVStream according to input AVStream）
+		AVStream *in_stream = ifmt_ctx->streams[i];
+		AVStream *out_stream = avformat_new_stream(ofmt_ctx, in_stream->codec->codec);
+		if (!out_stream) {
+			AfxMessageBox("Failed allocating output stream");
+			ret = AVERROR_UNKNOWN;
+			goto end;
+		}
+		//复制AVCodecContext的设置（Copy the settings of AVCodecContext）
+		ret = avcodec_copy_context(out_stream->codec, in_stream->codec);
+		if (ret < 0) {
+			AfxMessageBox("Failed to copy context from input to output stream codec context");
+			goto end;
+		}
+		out_stream->codec->codec_tag = 0;
+		if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
+			out_stream->codec->flags |= CODEC_FLAG_GLOBAL_HEADER;
+	}
+#endif
+	AVStream *video_st = avformat_new_stream(ofmt_ctx, penCodec);
+	if (!video_st) {
+		AfxMessageBox("Failed allocating video stream");
+		ret = AVERROR_UNKNOWN;
+		goto end;
+	}
+	video_st->time_base.num = 1;
+	video_st->time_base.den = 25;
+	video_st->codec = pCodecCtx;
+
+	//Dump Format------------------
+	av_dump_format(ofmt_ctx, 0, out_filename, 1);
+	ofmt = ofmt_ctx->oformat;
+	//打开输出URL（Open output URL）
+	if (!(ofmt->flags & AVFMT_NOFILE)) {
+		//Open output URL,set before avformat_write_header() for muxing  
+		if (avio_open(&ofmt_ctx->pb, out_filename, AVIO_FLAG_WRITE) < 0) {
+			//MultiByteToWideChar(CP_ACP, 0, out_filename, strlen(out_filename) + 1, temp_buf_w, 255);
+			sprintf(temp_buf, "Could not open output URL '%s'", out_filename);
+			//WideCharToMultiByte(CP_ACP, 0, temp_buf, wcslen(temp_buf) + 1, ansi_buf, 255, 0, 0);
+			AfxMessageBox(temp_buf);
+			goto end;
+		}
+	}
+	//写文件头（Write file header）
+	ret = avformat_write_header(ofmt_ctx, NULL);
+	if (ret < 0) {
+		AfxMessageBox("Error occurred when opening output URL\n");
+		goto end;
+	}
+	//prepare before decode and encode  
+	dec_pkt = (AVPacket *)av_malloc(sizeof(AVPacket));
+	//enc_pkt = (AVPacket *)av_malloc(sizeof(AVPacket));  
+	//camera data has a pix fmt of RGB,convert it to YUV420  
+	img_convert_ctx = sws_getContext(ifmt_ctx->streams[videoindex]->codec->width, ifmt_ctx->streams[videoindex]->codec->height,
+		ifmt_ctx->streams[videoindex]->codec->pix_fmt, pCodecCtx->width, pCodecCtx->height, PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
+	pFrameYUV = av_frame_alloc();
+	uint8_t *out_buffer = (uint8_t *)av_malloc(avpicture_get_size(PIX_FMT_YUV420P, pCodecCtx->width, pCodecCtx->height));
+	avpicture_fill((AVPicture *)pFrameYUV, out_buffer, PIX_FMT_YUV420P, pCodecCtx->width, pCodecCtx->height);
+
+	start_time = av_gettime();
+	//获取一个AVPacket（Get an AVPacket）
+	while (av_read_frame(ifmt_ctx, dec_pkt) >= 0) {
+		if (exit_thraad != 0) break;
+		av_log(NULL, AV_LOG_DEBUG, "Going to reencode the frame\n");
+		pFrame = av_frame_alloc();
+		if (!pFrame) {
+			ret = AVERROR(ENOMEM);
+			goto end;
+		}
+		//av_packet_rescale_ts(dec_pkt, ifmt_ctx->streams[dec_pkt->stream_index]->time_base,  
+		//  ifmt_ctx->streams[dec_pkt->stream_index]->codec->time_base);  
+		ret = avcodec_decode_video2(ifmt_ctx->streams[dec_pkt->stream_index]->codec, pFrame,
+			&dec_got_frame, dec_pkt);
+		if (ret < 0) {
+			av_frame_free(&pFrame);
+			av_log(NULL, AV_LOG_ERROR, "Decoding failed\n");
+			break;
+		}
+		if (dec_got_frame) {
+			sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameYUV->data, pFrameYUV->linesize);
+
+			enc_pkt.data = NULL;
+			enc_pkt.size = 0;
+			av_init_packet(&enc_pkt);
+			ret = avcodec_encode_video2(pCodecCtx, &enc_pkt, pFrameYUV, &enc_got_frame);
+			av_frame_free(&pFrame);
+			if (enc_got_frame == 1) {
+				//printf("Succeed to encode frame: %5d\tsize:%5d\n", framecnt, enc_pkt.size);  
+				sprintf(temp_buf, "Send %8d video frames to output URL\n", frame_index);
+				//memset(ansi_buf, 0, 255);
+				//WideCharToMultiByte(CP_ACP, 0, temp_buf, wcslen(temp_buf)+1, ansi_buf, 255, 0, 0);
+				logd(temp_buf);
+				pdlg->SetStatusMessage(temp_buf);
+				frame_index++;
+				enc_pkt.stream_index = video_st->index;
+
+				//Write PTS  
+				AVRational time_base = ofmt_ctx->streams[videoindex]->time_base;//{ 1, 1000 };  
+				AVRational r_framerate1 = ifmt_ctx->streams[videoindex]->r_frame_rate;// { 50, 2 };  
+				AVRational time_base_q = { 1, AV_TIME_BASE };
+				//Duration between 2 frames (us)  
+				int64_t calc_duration = (double)(AV_TIME_BASE)*(1 / av_q2d(r_framerate1));  //内部时间戳  
+																							//Parameters  
+																							//enc_pkt.pts = (double)(framecnt*calc_duration)*(double)(av_q2d(time_base_q)) / (double)(av_q2d(time_base));  
+				enc_pkt.pts = av_rescale_q(frame_index*calc_duration, time_base_q, time_base);
+				enc_pkt.dts = enc_pkt.pts;
+				enc_pkt.duration = av_rescale_q(calc_duration, time_base_q, time_base); //(double)(calc_duration)*(double)(av_q2d(time_base_q)) / (double)(av_q2d(time_base));  
+				enc_pkt.pos = -1;
+
+				//Delay  
+				int64_t pts_time = av_rescale_q(enc_pkt.dts, time_base, time_base_q);
+				int64_t now_time = av_gettime() - start_time;
+				if (pts_time > now_time)
+					av_usleep(pts_time - now_time);
+
+				ret = av_interleaved_write_frame(ofmt_ctx, &enc_pkt);
+				if (ret < 0) {
+					AfxMessageBox("Error muxing packet\n");
+					break;
+				}
+				av_free_packet(&enc_pkt);
+			}
+		}
+		else {
+			av_frame_free(&pFrame);
+		}
+		av_free_packet(dec_pkt);
+
+	}
+	//写文件尾（Write file trailer）
+	av_write_trailer(ofmt_ctx);
+	sws_freeContext(img_convert_ctx);
+	av_frame_free(&pFrameYUV);
+end:
+	avformat_close_input(&ifmt_ctx);
+	/* close output */
+	if (ofmt_ctx && !(ofmt->flags & AVFMT_NOFILE))
+		avio_close(ofmt_ctx->pb);
+	avformat_free_context(ofmt_ctx);
+	if (ret < 0 && ret != AVERROR_EOF) {
+		AfxMessageBox("Error occurred.\n");
+		return -1;
+	}
+	AfxMessageBox("push stream end!");
+
+	return 0;
+}
 
 static int open_input_file(const char *filename)
 {
@@ -651,7 +917,7 @@ end:
 	//让控制线程退出
 	thread_exit = 1;
 	int status = 0;
-	if(video_tid>0)
+	if(video_tid > 0)
 		SDL_WaitThread(video_tid, &status);
 	//吃掉线程退出产生的事件
 	SDL_WaitEvent(&event);
@@ -670,7 +936,8 @@ UINT ThreadPlayer(LPVOID lparam)
 {
 	CMFC_ffmpeg_streamerDlg *filterDlg = (CMFC_ffmpeg_streamerDlg *)lparam;
 	//mffmpeg_player(filterDlg);
-	push_streamer(filterDlg);
+	//push_streamer(filterDlg);
+	getcapdev_push_streamer(filterDlg);
 	return 0;
 }
 
