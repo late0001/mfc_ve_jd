@@ -28,6 +28,7 @@ class CMFC_ffmpeg_streamerDlg : public CDialogEx
 // 构造
 public:
 	SDL_Window *sdl_win;
+	CString m_file_path;
 	CMFC_ffmpeg_streamerDlg(CWnd* pParent = NULL);	// 标准构造函数
 // 对话框数据
 #ifdef AFX_DESIGN_TIME
@@ -41,7 +42,12 @@ public:
 // 实现
 protected:
 	HICON m_hIcon;
+	CMenu m_menu;
 	CStatusBar m_statusbar;
+	CRect m_SaveIcon;
+	CRect m_SaveButtonMin;
+	CRect m_SaveButtonMax;
+	CRect m_SaveButtonClose;
 	// 生成的消息映射函数
 	virtual BOOL OnInitDialog();
 	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
@@ -50,10 +56,16 @@ protected:
 	DECLARE_MESSAGE_MAP()
 public:
 	//int SetStatusMessage(CString str);
+	int OpenInput(const char *pSrc);
 	virtual BOOL DestroyWindow();
 	afx_msg void OnBnClickedBtnPlay();
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	int SetStatusMessage(char *buf);
 protected:
 	afx_msg LRESULT OnUserMsg1(WPARAM wParam, LPARAM lParam);
+public:
+	afx_msg void OnOpenFile();
+	virtual LRESULT DefWindowProc(UINT message, WPARAM wParam, LPARAM lParam);
+	virtual BOOL PreCreateWindow(CREATESTRUCT& cs);
+	afx_msg void OnNcLButtonDown(UINT nHitTest, CPoint point);
 };

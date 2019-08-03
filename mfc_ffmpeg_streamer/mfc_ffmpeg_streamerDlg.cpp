@@ -73,6 +73,8 @@ BEGIN_MESSAGE_MAP(CMFC_ffmpeg_streamerDlg, CDialogEx)
 	ON_BN_CLICKED(ID_BTN_PLAY, &CMFC_ffmpeg_streamerDlg::OnBnClickedBtnPlay)
 	ON_WM_TIMER()
 	ON_MESSAGE(WM_USER_MSG1, &CMFC_ffmpeg_streamerDlg::OnUserMsg1)
+	ON_COMMAND(IDM_OPEN, &CMFC_ffmpeg_streamerDlg::OnOpenFile)
+	ON_WM_NCLBUTTONDOWN()
 END_MESSAGE_MAP()
 
 static UINT indicators[] = {
@@ -112,6 +114,9 @@ BOOL CMFC_ffmpeg_streamerDlg::OnInitDialog()
 	SetIcon(m_hIcon, FALSE);		// 设置小图标
 
 	// TODO: 在此添加额外的初始化代码
+	m_menu.LoadMenu(IDR_MENU1);
+	SetMenu(&m_menu);
+
 	SetTimer(1, 1000, NULL);
 	m_statusbar.Create(this);
 	m_statusbar.SetIndicators(indicators, 2);
@@ -210,6 +215,7 @@ BOOL CMFC_ffmpeg_streamerDlg::DestroyWindow()
 	SDL_Quit();
 	return CDialogEx::DestroyWindow();
 }
+
 int push_streamer(CMFC_ffmpeg_streamerDlg *pdlg) 
 {
 	AVOutputFormat *ofmt = NULL;
@@ -497,28 +503,6 @@ int getcapdev_push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 		AfxMessageBox("Failed to open encoder!");
 		goto end;
 	}
-#if 0
-	ofmt = ofmt_ctx->oformat;
-	for (i = 0; i < ifmt_ctx->nb_streams; i++) {
-		//根据输入流创建输出流（Create output AVStream according to input AVStream）
-		AVStream *in_stream = ifmt_ctx->streams[i];
-		AVStream *out_stream = avformat_new_stream(ofmt_ctx, in_stream->codec->codec);
-		if (!out_stream) {
-			AfxMessageBox("Failed allocating output stream");
-			ret = AVERROR_UNKNOWN;
-			goto end;
-		}
-		//复制AVCodecContext的设置（Copy the settings of AVCodecContext）
-		ret = avcodec_copy_context(out_stream->codec, in_stream->codec);
-		if (ret < 0) {
-			AfxMessageBox("Failed to copy context from input to output stream codec context");
-			goto end;
-		}
-		out_stream->codec->codec_tag = 0;
-		if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
-			out_stream->codec->flags |= CODEC_FLAG_GLOBAL_HEADER;
-	}
-#endif
 	AVStream *video_st = avformat_new_stream(ofmt_ctx, penCodec);
 	if (!video_st) {
 		AfxMessageBox("Failed allocating video stream");
@@ -602,8 +586,8 @@ int getcapdev_push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 				AVRational time_base_q = { 1, AV_TIME_BASE };
 				//Duration between 2 frames (us)  
 				int64_t calc_duration = (double)(AV_TIME_BASE)*(1 / av_q2d(r_framerate1));  //内部时间戳  
-																							//Parameters  
-																							//enc_pkt.pts = (double)(framecnt*calc_duration)*(double)(av_q2d(time_base_q)) / (double)(av_q2d(time_base));  
+				//Parameters  
+				//enc_pkt.pts = (double)(framecnt*calc_duration)*(double)(av_q2d(time_base_q)) / (double)(av_q2d(time_base));  
 				enc_pkt.pts = av_rescale_q(frame_index*calc_duration, time_base_q, time_base);
 				enc_pkt.dts = enc_pkt.pts;
 				enc_pkt.duration = av_rescale_q(calc_duration, time_base_q, time_base); //(double)(calc_duration)*(double)(av_q2d(time_base_q)) / (double)(av_q2d(time_base));  
@@ -931,6 +915,415 @@ end:
 	}
 	return 0;
 }
+struct cvinfo {
+	char *infile_name;
+	AVFormatContext	*pifmt_ctx;
+
+} in_cvinfo;
+
+int CMFC_ffmpeg_streamerDlg::OpenInput(const char *pSrc = NULL)
+{
+	AVFormatContext *pifmt_ctx = NULL;
+	AVOutputFormat *pOutAVFmt = NULL;
+	AVPacket pkt;
+	int ret;
+	int i;
+	int isOpen = 0;
+	char temp_buf[255];
+	if(pSrc == NULL) 
+		if (m_file_path != "") {
+			pSrc = m_file_path;
+		}
+	//AfxMessageBox(pSrc);
+	//
+
+	av_register_all();
+	/* 打开输入多媒体文件 */
+	if ((ret = avformat_open_input(&pifmt_ctx, pSrc, 0, 0)) < 0)
+	{
+		sprintf(temp_buf, "avformat_open_input error!\n");
+		AfxMessageBox(temp_buf);
+		logd(temp_buf);
+		return ret;
+	}
+	in_cvinfo.pifmt_ctx = pifmt_ctx;
+	if ((ret = avformat_find_stream_info(pifmt_ctx, NULL)) < 0) {
+		sprintf(temp_buf, "Cannot find stream information\n");
+		logd(temp_buf);
+		return ret;
+	}
+
+	if (pifmt_ctx->duration != AV_NOPTS_VALUE) {
+		int hours, mins, secs, us;
+		int64_t duration = pifmt_ctx->duration + 5000;
+		secs = duration / AV_TIME_BASE;
+		us = duration % AV_TIME_BASE;
+		mins = secs / 60;
+		secs %= 60;
+		hours = mins / 60;
+		mins %= 60;
+		sprintf(temp_buf, "%02d:%02d:%02d.%02d", hours, mins, secs, (100 * us) / AV_TIME_BASE);
+		SetDlgItemText(IDC_STATIC_TOTALTIME, temp_buf);
+	}
+	/* 打印输入多媒体文件的信息 */
+	av_dump_format(pifmt_ctx, 0, pSrc, 0);
+	return 0;
+end:
+	return -1;
+}
+int VideoPreview(int startTime, int endTime, const char *pSrc, const char *pDst)
+{
+	AVFormatContext *pifmt_ctx = NULL;
+	AVFormatContext *pofmt_ctx = NULL;
+	AVOutputFormat *pOutAVFmt = NULL;
+	AVPacket pkt;
+	int ret;
+	int i;
+	int isOpen = 0;
+	char temp_buf[255];
+
+	/* 打开输入多媒体文件 */
+	if ((ret = avformat_open_input(&pifmt_ctx, pSrc, 0, 0)) < 0)
+	{
+		sprintf(temp_buf, "avformat_open_input error!\n");
+		AfxMessageBox(temp_buf);
+		logd(temp_buf);
+		goto end;
+	}
+
+	/* 打印输入多媒体文件的信息 */
+	av_dump_format(pifmt_ctx, 0, pSrc, 0);
+
+	/* 打开输出文件 */
+	avformat_alloc_output_context2(&pofmt_ctx, NULL, NULL, pDst);
+	if (!pofmt_ctx)
+	{
+		sprintf(temp_buf, "avformat_alloc_output_context2 error!\n");
+		AfxMessageBox(temp_buf);
+		logd(temp_buf);
+		ret = AVERROR_UNKNOWN;
+		goto end;
+	}
+
+	pOutAVFmt = pofmt_ctx->oformat;
+
+	/* 为输出多媒体文件创建流并且拷贝流参数 */
+	for (i = 0; i < pifmt_ctx->nb_streams; i++)
+	{
+		AVStream *pInStream = pifmt_ctx->streams[i];
+		AVStream *pOutStream = avformat_new_stream(pofmt_ctx, pInStream->codec->codec);;
+		if (!pOutStream)
+		{
+			sprintf(temp_buf, "avformat_new_stream error!\n");
+			AfxMessageBox(temp_buf);
+			logd(temp_buf);
+			ret = AVERROR_UNKNOWN;
+			goto end;
+		}
+
+		/* 拷贝参数 */
+		ret = avcodec_copy_context(pOutStream->codec, pInStream->codec);
+		if (ret < 0)
+		{
+			sprintf(temp_buf, "avcodec_copy_context error!\n");
+			AfxMessageBox(temp_buf);
+			logd(temp_buf);
+			goto end;
+		}
+
+		/* 拷贝参数 */
+		/*ret = avcodec_parameters_copy(pOutStream->codecpar, pInStream->codecpar);
+		if (ret < 0)
+		{
+		printf("avcodec_parameters_copy error!\n");
+		return -1;
+		}*/
+
+		pOutStream->codec->codec_tag = 0;
+
+	}
+
+	av_dump_format(pofmt_ctx, 0, pDst, 1);
+
+	/* 打开输出多媒体文件，准备写数据 */
+	ret = avio_open(&pofmt_ctx->pb, pDst, AVIO_FLAG_WRITE);
+	if (ret < 0)
+	{
+		sprintf(temp_buf, "avio_open error!\n");
+		AfxMessageBox(temp_buf);
+		logd(temp_buf);
+		goto end;
+	}
+	isOpen = 1;
+
+	/* 写多媒体文件头 */
+	ret = avformat_write_header(pofmt_ctx, NULL);
+	if (ret < 0)
+	{
+		sprintf(temp_buf, "avformat_write_header error!\n");
+		AfxMessageBox(temp_buf);
+		logd(temp_buf);
+		goto end;
+	}
+
+	/* 移动到相应的时间点 */
+	ret = av_seek_frame(pifmt_ctx, -1, startTime*AV_TIME_BASE, AVSEEK_FLAG_ANY);
+	if (ret < 0)
+	{
+		sprintf(temp_buf, "av_seek_frame error!\n");
+		AfxMessageBox(temp_buf);
+		logd(temp_buf);
+		goto end;
+	}
+
+	int64_t *dtsStartTime = (int64_t *)malloc(sizeof(int64_t) * pifmt_ctx->nb_streams);
+	memset(dtsStartTime, 0, sizeof(int64_t) * pifmt_ctx->nb_streams);
+	int64_t *ptsStartTime = (int64_t *)malloc(sizeof(int64_t) * pifmt_ctx->nb_streams);
+	memset(ptsStartTime, 0, sizeof(int64_t) * pifmt_ctx->nb_streams);
+
+	while (1)
+	{
+		AVStream *pInStream, *pOutStream;
+
+		ret = av_read_frame(pifmt_ctx, &pkt);
+		if (ret < 0)
+			break;
+
+		pInStream = pifmt_ctx->streams[pkt.stream_index];
+		pOutStream = pofmt_ctx->streams[pkt.stream_index];
+
+		if (av_q2d(pInStream->time_base) * pkt.pts > endTime)
+		{
+			av_free_packet(&pkt);
+			break;
+		}
+
+		if (dtsStartTime[pkt.stream_index] == 0)
+			dtsStartTime[pkt.stream_index] = pkt.dts;
+
+		if (ptsStartTime[pkt.stream_index] == 0)
+			ptsStartTime[pkt.stream_index] = pkt.pts;
+
+		/* 转化时间基 */
+		pkt.pts = av_rescale_q_rnd(pkt.pts - ptsStartTime[pkt.stream_index], pInStream->time_base, pOutStream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+		pkt.dts = av_rescale_q_rnd(pkt.dts - dtsStartTime[pkt.stream_index], pInStream->time_base, pOutStream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+		if (pkt.pts < 0)
+			pkt.pts = 0;
+
+		if (pkt.dts < 0)
+			pkt.dts = 0;
+
+		pkt.duration = (int)av_rescale_q((int64_t)pkt.duration, pInStream->time_base, pOutStream->time_base);
+		pkt.pos = -1;
+
+		/* 写数据 */
+		ret = av_interleaved_write_frame(pofmt_ctx, &pkt);
+		if (ret < 0)
+		{
+			sprintf(temp_buf, "av_interleaved_write_frame error!\n");
+			AfxMessageBox(temp_buf);
+			logd(temp_buf);
+			break;
+		}
+
+		av_free_packet(&pkt);
+	}
+
+	free(dtsStartTime);
+	free(ptsStartTime);
+
+	av_write_trailer(pofmt_ctx);
+
+end:
+	if (isOpen)
+		avio_closep(&pofmt_ctx->pb);
+
+
+	if (pifmt_ctx)
+		avformat_close_input(&pifmt_ctx);
+
+	if (pofmt_ctx)
+		avformat_free_context(pofmt_ctx);
+
+	return ret;
+}
+
+int cutVideo(int startTime, int endTime, const char *pSrc, const char *pDst)
+{
+	AVFormatContext *pifmt_ctx = NULL;
+	AVFormatContext *pofmt_ctx = NULL;
+	AVOutputFormat *pOutAVFmt = NULL;
+	AVPacket pkt;
+	int ret;
+	int i;
+	int isOpen = 0;
+	char temp_buf[255];
+	
+	/* 打开输入多媒体文件 */
+	if ((ret = avformat_open_input(&pifmt_ctx, pSrc, 0, 0)) < 0)
+	{
+		sprintf(temp_buf, "avformat_open_input error!\n");
+		AfxMessageBox(temp_buf);
+		logd(temp_buf);
+		goto end;
+	}
+
+	/* 打印输入多媒体文件的信息 */
+	av_dump_format(pifmt_ctx, 0, pSrc, 0);
+
+	/* 打开输出文件 */
+	avformat_alloc_output_context2(&pofmt_ctx, NULL, NULL, pDst);
+	if (!pofmt_ctx)
+	{
+		sprintf(temp_buf, "avformat_alloc_output_context2 error!\n");
+		AfxMessageBox(temp_buf);
+		logd(temp_buf);
+		ret = AVERROR_UNKNOWN;
+		goto end;
+	}
+
+	pOutAVFmt = pofmt_ctx->oformat;
+
+	/* 为输出多媒体文件创建流并且拷贝流参数 */
+	for (i = 0; i < pifmt_ctx->nb_streams; i++)
+	{
+		AVStream *pInStream = pifmt_ctx->streams[i];
+		AVStream *pOutStream = avformat_new_stream(pofmt_ctx, pInStream->codec->codec);;
+		if (!pOutStream)
+		{
+			sprintf(temp_buf, "avformat_new_stream error!\n");
+			AfxMessageBox(temp_buf);
+			logd(temp_buf);
+			ret = AVERROR_UNKNOWN;
+			goto end;
+		}
+
+		/* 拷贝参数 */
+		ret = avcodec_copy_context(pOutStream->codec, pInStream->codec);
+		if (ret < 0)
+		{
+			sprintf(temp_buf, "avcodec_copy_context error!\n");
+			AfxMessageBox(temp_buf);
+			logd(temp_buf);
+			goto end;
+		}
+
+		/* 拷贝参数 */
+		/*ret = avcodec_parameters_copy(pOutStream->codecpar, pInStream->codecpar);
+		if (ret < 0)
+		{
+			printf("avcodec_parameters_copy error!\n");
+			return -1;
+		}*/
+
+		pOutStream->codec->codec_tag = 0;
+
+	}
+
+	av_dump_format(pofmt_ctx, 0, pDst, 1);
+
+	/* 打开输出多媒体文件，准备写数据 */
+	ret = avio_open(&pofmt_ctx->pb, pDst, AVIO_FLAG_WRITE);
+	if (ret < 0)
+	{
+		sprintf(temp_buf, "avio_open error!\n");
+		AfxMessageBox(temp_buf);
+		logd(temp_buf);
+		goto end;
+	}
+	isOpen = 1;
+
+	/* 写多媒体文件头 */
+	ret = avformat_write_header(pofmt_ctx, NULL);
+	if (ret < 0)
+	{
+		sprintf(temp_buf, "avformat_write_header error!\n");
+		AfxMessageBox(temp_buf);
+		logd(temp_buf);
+		goto end;
+	}
+
+	/* 移动到相应的时间点 */
+	ret = av_seek_frame(pifmt_ctx, -1, startTime*AV_TIME_BASE, AVSEEK_FLAG_ANY);
+	if (ret < 0)
+	{
+		sprintf(temp_buf, "av_seek_frame error!\n");
+		AfxMessageBox(temp_buf);
+		logd(temp_buf);
+		goto end;
+	}
+
+	int64_t *dtsStartTime = (int64_t *)malloc(sizeof(int64_t) * pifmt_ctx->nb_streams);
+	memset(dtsStartTime, 0, sizeof(int64_t) * pifmt_ctx->nb_streams);
+	int64_t *ptsStartTime = (int64_t *)malloc(sizeof(int64_t) * pifmt_ctx->nb_streams);
+	memset(ptsStartTime, 0, sizeof(int64_t) * pifmt_ctx->nb_streams);
+
+	while (1)
+	{
+		AVStream *pInStream, *pOutStream;
+
+		ret = av_read_frame(pifmt_ctx, &pkt);
+		if (ret < 0)
+			break;
+
+		pInStream = pifmt_ctx->streams[pkt.stream_index];
+		pOutStream = pofmt_ctx->streams[pkt.stream_index];
+
+		if (av_q2d(pInStream->time_base) * pkt.pts > endTime)
+		{
+			av_free_packet(&pkt);
+			break;
+		}
+
+		if (dtsStartTime[pkt.stream_index] == 0)
+			dtsStartTime[pkt.stream_index] = pkt.dts;
+
+		if (ptsStartTime[pkt.stream_index] == 0)
+			ptsStartTime[pkt.stream_index] = pkt.pts;
+
+		/* 转化时间基 */
+		pkt.pts = av_rescale_q_rnd(pkt.pts - ptsStartTime[pkt.stream_index], pInStream->time_base, pOutStream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+		pkt.dts = av_rescale_q_rnd(pkt.dts - dtsStartTime[pkt.stream_index], pInStream->time_base, pOutStream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+		if (pkt.pts < 0)
+			pkt.pts = 0;
+
+		if (pkt.dts < 0)
+			pkt.dts = 0;
+
+		pkt.duration = (int)av_rescale_q((int64_t)pkt.duration, pInStream->time_base, pOutStream->time_base);
+		pkt.pos = -1;
+
+		/* 写数据 */
+		ret = av_interleaved_write_frame(pofmt_ctx, &pkt);
+		if (ret < 0)
+		{
+			sprintf(temp_buf, "av_interleaved_write_frame error!\n");
+			AfxMessageBox(temp_buf);
+			logd(temp_buf);
+			break;
+		}
+
+		av_free_packet(&pkt);
+	}
+
+	free(dtsStartTime);
+	free(ptsStartTime);
+
+	av_write_trailer(pofmt_ctx);
+
+end:
+	if (isOpen)
+		avio_closep(&pofmt_ctx->pb);
+
+
+	if (pifmt_ctx)
+		avformat_close_input(&pifmt_ctx);
+
+	if (pofmt_ctx)
+		avformat_free_context(pofmt_ctx);
+
+	return ret;
+}
 
 UINT ThreadPlayer(LPVOID lparam)
 {
@@ -971,4 +1364,171 @@ afx_msg LRESULT CMFC_ffmpeg_streamerDlg::OnUserMsg1(WPARAM wParam, LPARAM lParam
 	
 	m_statusbar.SetPaneText(0, (LPCTSTR)lParam);
 	return 0;
+}
+
+
+void CMFC_ffmpeg_streamerDlg::OnOpenFile()
+{
+	// TODO: 在此添加命令处理程序代码
+
+	BOOL isOpen = TRUE;		//是否打开(否则为保存)
+	CString defaultDir = ".\\";	//默认打开的文件路径
+	CString fileName = "";			//默认打开的文件名
+	CString filter = "文件 (*.*)|*.*||";	//文件过虑的类型
+	GetModuleFileName(NULL, defaultDir.GetBuffer(MAX_PATH), MAX_PATH);
+	defaultDir.ReleaseBuffer();
+	int pos = defaultDir.ReverseFind(_T('\\'));
+	int len = defaultDir.GetLength();
+	defaultDir = defaultDir.Left(pos);
+	//AfxMessageBox(defaultDir);
+	CFileDialog openFileDlg(isOpen, 0, defaultDir, OFN_HIDEREADONLY | OFN_READONLY, filter, NULL);
+	openFileDlg.GetOFN().lpstrInitialDir = ".\\";
+	INT_PTR result = openFileDlg.DoModal();
+	CString filePath = defaultDir + "\\..\\mfc_ffmpeg_streamer\\cuc_ieschool.flv";
+	if (result == IDOK) {
+		filePath = openFileDlg.GetPathName();
+	}
+	m_file_path = filePath;
+	OpenInput();
+	SetWindowText(filePath);
+	SendMessage(WM_NCPAINT, NULL, NULL);
+
+}
+
+
+LRESULT CMFC_ffmpeg_streamerDlg::DefWindowProc(UINT message, WPARAM wParam, LPARAM lParam)
+{
+	// TODO: 在此添加专用代码和/或调用基类
+
+	//return CDialogEx::DefWindowProc(message, wParam, lParam);
+	//LRESULT lResult = CDialogEx::DefWindowProc(message, wParam, lParam);
+
+	LRESULT lResult = CDialogEx::DefWindowProc(message, wParam, lParam);
+	if (!::IsWindow(m_hWnd))
+		return lResult;
+	if (message == WM_NCPAINT || message == WM_NCACTIVATE || message == WM_NOTIFY)
+	{
+		CDC *pDC = GetWindowDC();
+		CRect RectWnd, RectTitle, RectButtons;
+		GetWindowRect(&RectWnd);
+		//GetClientRect(&RectWnd);
+		int edge = GetSystemMetrics(SM_CYFIXEDFRAME);
+		int frame_border = GetSystemMetrics(SM_CYFIXEDFRAME);
+		int dlg_border = frame_border + edge;
+		
+		//CString str;
+		//str.Format("%d", GetSystemMetrics(SM_CYFIXEDFRAME));// 对话框边框厚度
+		//AfxMessageBox(str);
+		//取得整个标题栏的矩形
+		RectTitle.left = GetSystemMetrics(SM_CXFRAME) + frame_border ;
+		RectTitle.top = GetSystemMetrics(SM_CYFRAME) + frame_border;
+		RectTitle.right = RectWnd.right - RectWnd.left - frame_border -2*edge;//+ dlg_border+2;// -
+			//GetSystemMetrics(SM_CXFRAME);
+		RectTitle.bottom = RectTitle.top + GetSystemMetrics(SM_CYSIZE);
+		//重画标题栏
+		CBrush brush;
+		brush.CreateSolidBrush(RGB(0, 120, 200));
+		pDC->FillRect(RectTitle, &brush);
+		
+
+		//重画图标
+		HICON hIcon = m_hIcon;//(HICON)::GetClassLong(m_hWnd, GCL_HICON);
+		m_SaveIcon.left = RectTitle.left + dlg_border; //RectTitle.right - GetSystemMetrics(SM_CYSMICON);
+		m_SaveIcon.top = RectTitle.top + dlg_border;
+		m_SaveIcon.right = m_SaveIcon.left + GetSystemMetrics(SM_CXSMICON);
+		m_SaveIcon.bottom = m_SaveIcon.top + GetSystemMetrics(SM_CYSMICON);
+		::DrawIconEx(pDC->m_hDC, m_SaveIcon.left, m_SaveIcon.top, hIcon,
+			GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+			0, NULL, DI_NORMAL);
+
+		//记录图标屏幕位置
+		m_SaveIcon.OffsetRect(RectWnd.TopLeft());
+
+		//重画最小化按钮
+		int nButtHeight = GetSystemMetrics(SM_CYSMSIZE) - frame_border;
+		int nButtWidth = GetSystemMetrics(SM_CYSMSIZE);
+		RectButtons.left = RectTitle.right - nButtWidth *3  ;
+		RectButtons.top = RectTitle.top +
+			(GetSystemMetrics(SM_CYSIZE) - nButtHeight) / 2 ;
+		RectButtons.right = RectButtons.left + nButtWidth;
+		RectButtons.bottom = RectButtons.top + nButtHeight;
+		pDC->DrawFrameControl(&RectButtons, DFC_CAPTION, DFCS_CAPTIONMIN);
+		m_SaveButtonMin = RectButtons;
+		//记录最小化按钮屏幕位置
+		m_SaveButtonMin.OffsetRect(RectWnd.TopLeft());
+		//重画最大化或恢复按钮
+		RectButtons.left = RectButtons.right;
+		RectButtons.right = RectButtons.left + nButtWidth;
+
+		pDC->DrawFrameControl(&RectButtons, DFC_CAPTION, DFCS_CAPTIONMIN);
+		pDC->DrawFrameControl(&RectButtons, DFC_CAPTION, IsZoomed() ?
+			DFCS_CAPTIONRESTORE : DFCS_CAPTIONMAX);
+		m_SaveButtonMax = RectButtons;
+		//记录最大化按钮屏幕位置
+		m_SaveButtonMax.OffsetRect(RectWnd.TopLeft());
+
+		//重画关闭按钮
+		RectButtons.left = RectButtons.right;
+		RectButtons.right = RectButtons.left + nButtWidth;
+		pDC->DrawFrameControl(&RectButtons, DFC_CAPTION, DFCS_CAPTIONCLOSE);
+		m_SaveButtonClose = RectButtons;
+		//记录关闭按钮屏幕位置
+		m_SaveButtonClose.OffsetRect(RectWnd.TopLeft());
+		//重画标题栏
+		int nOldMode = pDC->SetBkMode(TRANSPARENT);
+		COLORREF clOldText = pDC->SetTextColor(RGB(0, 0, 0));
+		pDC->SelectStockObject(ANSI_FIXED_FONT);
+		//RectTitle.right -= GetSystemMetrics(SM_CYSMICON);
+		CString title;
+		GetWindowText(title.GetBuffer(255), 255);
+		RectTitle.top += 5;
+		pDC->DrawText(title, -1, &RectTitle, DT_CENTER);
+		pDC->SetBkMode(nOldMode);
+		pDC->SetTextColor(clOldText);
+	}
+	return lResult;
+}
+
+
+BOOL CMFC_ffmpeg_streamerDlg::PreCreateWindow(CREATESTRUCT& cs)
+{
+	// TODO: 在此添加专用代码和/或调用基类
+	// 样式
+	
+	//return CDialogEx::PreCreateWindow(cs);
+	if (!CDialogEx::PreCreateWindow(cs))
+		return FALSE;
+	cs.style &= ~WS_SYSMENU; //取消标题栏上的按钮
+	return TRUE;
+}
+
+
+void CMFC_ffmpeg_streamerDlg::OnNcLButtonDown(UINT nHitTest, CPoint point)
+{
+	// TODO: 在此添加消息处理程序代码和/或调用默认值
+
+	
+	//检测最小，最大和关闭按钮是否按到
+	
+	CDialogEx::OnNcLButtonDown(nHitTest, point);
+	//CString str;
+	//str.Format("%d, %d", point.x, point.y);
+	//AfxMessageBox(str);
+	//str.Format("close icon (%d,%d), (%d,%d)", m_SaveButtonClose.left, m_SaveButtonClose.top,
+	//	m_SaveButtonClose.right, m_SaveButtonClose.bottom);
+	//AfxMessageBox(str);
+	if (m_SaveButtonClose.PtInRect(point)) {
+		SendMessage(WM_CLOSE);
+	}
+	else if (m_SaveButtonMin.PtInRect(point))
+		SendMessage(WM_SYSCOMMAND, SC_MINIMIZE, MAKELPARAM(point.x, point.y));
+	else if (m_SaveButtonMax.PtInRect(point))
+	{
+		if (IsZoomed())
+			SendMessage(WM_SYSCOMMAND, SC_RESTORE,
+				MAKELPARAM(point.x, point.y));
+		else
+			SendMessage(WM_SYSCOMMAND, SC_MAXIMIZE,
+				MAKELPARAM(point.x, point.y));
+	}
 }
