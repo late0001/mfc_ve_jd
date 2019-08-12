@@ -33,6 +33,9 @@
     <ClInclude Include="mfc_ffmpeg_streamer.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="MySliderCtrl.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -42,6 +45,9 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="mfc_ffmpeg_streamerDlg.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="MySliderCtrl.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
