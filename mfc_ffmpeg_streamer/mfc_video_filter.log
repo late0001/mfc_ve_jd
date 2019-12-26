@@ -1,4 +1,4 @@
 Device Info=============
 ========================
-avformat_open_input error!
+avio_open error!
 avformat_write_header error!

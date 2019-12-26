@@ -1,25 +1,7 @@
 
 // mfc_ffmpeg_video_filterDlg.h : Í·ÎÄ¼þ
 //
-#ifdef __cplusplus
-extern "C" {
-#endif
-#include <libavcodec/avcodec.h>
-#include <libavdevice/avdevice.h>
-#include <libavformat/avformat.h>
-#include <libavfilter/avfiltergraph.h>
-#include <libavfilter/buffersink.h>
-#include <libavfilter/buffersrc.h>
-#include <libavutil/avutil.h>
-#include "libavutil/imgutils.h"
-//#include "libavutil/mem.h"
-#include "libavutil/mathematics.h"
-#include "libavutil/time.h"
-#include <libswscale/swscale.h>
-#include <sdl/sdl.h>
-#ifdef __cplusplus
-}
-#endif
+#include "ff_common.h"
 #include "afxcmn.h"
 #include "MySliderCtrl.h"
 #pragma once
@@ -80,4 +62,6 @@ public:
 	afx_msg void OnBnClickedBtnCutstart();
 	afx_msg void OnBnClickedBtnCutend();
 	afx_msg void OnClickedBtnSave();
+	CListCtrl m_playListCtrl;
+	afx_msg void OnBnClickedBtnCon();
 };
