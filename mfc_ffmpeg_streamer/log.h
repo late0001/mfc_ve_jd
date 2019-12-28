@@ -6,6 +6,6 @@
 
 void init_log();
 int logd(char *buf);
-
+void log_print(LPCTSTR lpszFmt, ...);
 #endif
 

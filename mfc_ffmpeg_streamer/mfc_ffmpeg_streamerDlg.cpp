@@ -14,6 +14,7 @@
 #define new DEBUG_NEW
 #endif
 
+
 #define ENABLE_YUVFILE 0
 
 
@@ -973,6 +974,18 @@ struct movclip_info {
 	int64_t end_time;
 	char sv_filepath[MAX_PATH];
 } movclip;
+
+typedef struct OutputStream {
+	AVStream *st;
+	AVRational mux_timebase;
+} OutputStream;
+
+typedef struct OutputFile {
+	AVFormatContext *ctx;
+	int64_t recording_time; //desired length of the resulting file in microseconds == AV_TIME_BASE units
+	int64_t start_time; //start time in microseconds == AV_TIME_BASE units
+} OutputFile;
+
 int CMFC_ffmpeg_streamerDlg::OpenInput(const char *pSrc = NULL)
 {
 	AVFormatContext *pifmt_ctx = NULL;
@@ -1418,19 +1431,44 @@ end:
 	return ret;
 }
 
-int cutVideo(CMFC_ffmpeg_streamerDlg *dlg,int startTime, int endTime, const char *pSrc, const char *pDst)
+
+/*
+* startTime start time in microseconds 
+*/
+int cutVideo(CMFC_ffmpeg_streamerDlg *dlg, int64_t startTime, int64_t endTime, const char *pSrc, const char *pDst)
 {
 	AVFormatContext *pifmt_ctx = NULL;
 	AVFormatContext *pofmt_ctx = NULL;
 	AVOutputFormat *pOutAVFmt = NULL;
+	OutputStream *ost;
+	OutputFile *of;
+
 	AVPacket pkt;
+	AVPacket opkt;
 	AVCodec *pInCodec;
 	int ret;
 	int i;
 	int frame_cnt=0;
 	int isOpen = 0;
 	char temp_buf[255];
+	int64_t recording_time;
 
+	if (startTime > endTime) {
+		OutputDebugString("error, startTime > endTime");
+		AfxMessageBox("Not allow to this operation, because the start time larger than the end of time");
+		return -1;
+	}
+	if (!(ost = (OutputStream *)av_mallocz(sizeof(*ost)))) {
+		OutputDebugString("insufficient Memory, can not allocate OutputStream *ost!\n");
+		return -1;
+	}
+	
+	if (!(of = (OutputFile *)av_mallocz(sizeof(*of)))) {
+		OutputDebugString("insufficient Memory, can not allocate OutputFile *of!\n");
+		return -1;
+	}
+
+		recording_time = endTime - startTime;
 #if 0
 	/* 打开输入多媒体文件 */
 	if ((ret = avformat_open_input(&pifmt_ctx, pSrc, 0, 0)) < 0)
@@ -1473,8 +1511,6 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg,int startTime, int endTime, const char
 			ret = AVERROR_UNKNOWN;
 			goto end;
 		}
-
-	
 		/* 拷贝参数 */
 		ret = avcodec_parameters_copy(pOutStream->codecpar, pInStream->codecpar);
 		if (ret < 0)
@@ -1503,6 +1539,7 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg,int startTime, int endTime, const char
 	}
 	isOpen = 1;
 	av_init_packet(&pkt);
+	av_init_packet(&opkt);
 	/* 写多媒体文件头 */
 	ret = avformat_write_header(pofmt_ctx, NULL);
 	if (ret < 0)
@@ -1514,7 +1551,7 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg,int startTime, int endTime, const char
 	}
 
 	/* 移动到相应的时间点 */
-	ret = av_seek_frame(pifmt_ctx, -1, startTime*AV_TIME_BASE, AVSEEK_FLAG_ANY);
+	ret = av_seek_frame(pifmt_ctx, -1, startTime, AVSEEK_FLAG_ANY);
 	if (ret < 0)
 	{
 		sprintf(temp_buf, "av_seek_frame error!\n");
@@ -1527,7 +1564,7 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg,int startTime, int endTime, const char
 	memset(dtsStartTime, 0, sizeof(int64_t) * pifmt_ctx->nb_streams);
 	int64_t *ptsStartTime = (int64_t *)malloc(sizeof(int64_t) * pifmt_ctx->nb_streams);
 	memset(ptsStartTime, 0, sizeof(int64_t) * pifmt_ctx->nb_streams);
-
+	int64_t ost_tb_start_time = av_rescale_q(startTime, AV_TIME_BASE_Q1, ost->mux_timebase);
 	while (1)
 	{
 		AVStream *pInStream, *pOutStream;
@@ -1542,13 +1579,15 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg,int startTime, int endTime, const char
 		dlg->SetStatusMessage(temp_buf);
 		pInStream = pifmt_ctx->streams[pkt.stream_index];
 		pOutStream = pofmt_ctx->streams[pkt.stream_index];
-
-		if (av_q2d(pInStream->time_base) * pkt.pts > endTime)
+		ost->mux_timebase = pOutStream->time_base;
+		//if (av_q2d(pInStream->time_base) * pkt.pts > endTime)
+		if (pkt.pts >= recording_time + startTime)
 		{
 			//av_free_packet(&pkt);
 			av_packet_unref(&pkt);
 			break;
 		}
+		
 		//将截取后的每个流的起始dts、pts保存下来，作为开始时间，用来做后面的时基转换
 		if (dtsStartTime[pkt.stream_index] == 0) {
 			dtsStartTime[pkt.stream_index] = pkt.dts;
@@ -1563,8 +1602,20 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg,int startTime, int endTime, const char
 		}
 		sprintf(temp_buf, "frame[%d]  111>>> pts = %lld, dts = %lld\n", frame_cnt, pkt.pts, pkt.dts);
 		OutputDebugString(temp_buf);
+		//
+		
+		if (pkt.pts != AV_NOPTS_VALUE)
+			opkt.pts = av_rescale_q(pkt.pts, pInStream->time_base, ost->mux_timebase) - ost_tb_start_time;
+		else
+			opkt.pts = AV_NOPTS_VALUE;
+		/*if (pkt.dts == AV_NOPTS_VALUE)
+			opkt.dts = av_rescale_q(ist->dts, AV_TIME_BASE_Q1, ost->mux_timebase);
+		else*/
+			opkt.dts = av_rescale_q(pkt.dts, pInStream->time_base, ost->mux_timebase);
+		opkt.dts -= ost_tb_start_time;
+		
 		/* 转化时间基 */
-		pkt.pts = av_rescale_q_rnd(pkt.pts - ptsStartTime[pkt.stream_index], pInStream->time_base, pOutStream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+		/*pkt.pts = av_rescale_q_rnd(pkt.pts - ptsStartTime[pkt.stream_index], pInStream->time_base, pOutStream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
 		pkt.dts = av_rescale_q_rnd(pkt.dts - dtsStartTime[pkt.stream_index], pInStream->time_base, pOutStream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
 		if (pkt.pts < 0)
 			pkt.pts = 0;
@@ -1574,9 +1625,17 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg,int startTime, int endTime, const char
 		
 		pkt.duration = (int)av_rescale_q((int64_t)pkt.duration, pInStream->time_base, pOutStream->time_base);
 		pkt.pos = -1;
+		*/
+		opkt.duration = av_rescale_q(pkt.duration, pInStream->time_base, ost->mux_timebase);
+		opkt.flags = pkt.flags;
+
+		opkt.data = pkt.data;
+		opkt.size = pkt.size;
+		av_copy_packet_side_data(&opkt, &pkt);
+
 		sprintf(temp_buf, " 222>>> pts = %lld, dts = %lld\n", pkt.pts, pkt.dts);
 		OutputDebugString(temp_buf);
-		if (pkt.pts < pkt.dts) { continue; }
+		//if (pkt.pts < pkt.dts) { continue; }
 		/* 写数据 */
 		ret = av_interleaved_write_frame(pofmt_ctx, &pkt);
 		if (ret < 0)
@@ -1590,7 +1649,7 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg,int startTime, int endTime, const char
 			break;
 		}
 		av_packet_unref(&pkt);
-		//av_free_packet(&pkt);
+		av_packet_unref(&opkt);
 	}
 
 	free(dtsStartTime);
@@ -1928,12 +1987,12 @@ void CMFC_ffmpeg_streamerDlg::OnClickedMovieClip()
 		AfxMessageBox("please input save path");
 		return;
 #else
-		OutputDebugString("no file name was entered,use default E:\\xxwork\\test.mp4");
+		OutputDebugString("no file name was entered,use default E:\\xxwork\\test.mp4\n");
 		strcpy(movclip.sv_filepath, "E:\\xxwork\\test.mp4");
 #endif
 	}
 	// TODO: 在此添加控件通知处理程序代码
-	cutVideo(this, movclip.start_time, movclip.end_time, in_cvinfo.infile_name, movclip.sv_filepath);
+	cutVideo(this, movclip.start_time * AV_TIME_BASE, movclip.end_time * AV_TIME_BASE, in_cvinfo.infile_name, movclip.sv_filepath);
 }
 
 

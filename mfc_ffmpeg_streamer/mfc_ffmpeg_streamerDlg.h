@@ -5,7 +5,7 @@
 #include "afxcmn.h"
 #include "MySliderCtrl.h"
 #pragma once
-
+const AVRational AV_TIME_BASE_Q1 = { 1, AV_TIME_BASE };
 
 // CMFC_ffmpeg_video_filterDlg ¶Ô»°¿ò
 class CMFC_ffmpeg_streamerDlg : public CDialogEx
