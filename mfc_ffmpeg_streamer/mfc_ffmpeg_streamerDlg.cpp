@@ -672,7 +672,7 @@ end:
 	return 0;
 }
 
-static int open_input_file(const char *filename)
+static int open_input_file1(const char *filename)
 {
 	int ret;
 	AVCodec *dec;
@@ -806,7 +806,7 @@ int mffmpeg_player(CMFC_ffmpeg_streamerDlg *filterDlg)
 
 	//av_register_all();
 	avfilter_register_all();
-	if ((ret = open_input_file("cuc_ieschool.flv")) < 0)
+	if ((ret = open_input_file1("cuc_ieschool.flv")) < 0)
 		goto end;
 	if ((ret = init_filters(filter_descr)) < 0)
 		goto end;
@@ -980,12 +980,135 @@ typedef struct OutputStream {
 	AVRational mux_timebase;
 } OutputStream;
 
+typedef struct InputStream {
+	AVStream *st;
+	AVCodecContext *dec_ctx;
+	AVCodec *dec;
+	int64_t filter_in_rescale_delta_last;
+}InputStream;
+typedef struct InputFile {
+	AVFormatContext *ctx;
+	AVRational time_base; /* time base of the duration */
+	int       nb_streams;
+	int ist_index;        /* index of first stream in input_streams */
+
+} InputFile;
+
 typedef struct OutputFile {
 	AVFormatContext *ctx;
 	int64_t recording_time; //desired length of the resulting file in microseconds == AV_TIME_BASE units
 	int64_t start_time; //start time in microseconds == AV_TIME_BASE units
 } OutputFile;
 
+InputStream **input_streams = NULL;
+int        nb_input_streams = 0;
+
+void *grow_array(void *array, int elem_size, int *size, int new_size)
+{
+	if (new_size >= INT_MAX / elem_size) {
+		OutputDebugString("Array too big.\n");
+		return NULL;
+	}
+	if (*size < new_size) {
+		uint8_t *tmp = (uint8_t *)av_realloc_array(array, new_size, elem_size);
+		if (!tmp) {
+			OutputDebugString("Could not alloc buffer.\n");
+			return NULL;
+		}
+		memset(tmp + *size*elem_size, 0, (new_size - *size) * elem_size);
+		*size = new_size;
+		return tmp;
+	}
+	return array;
+}
+
+#define GROW_ARRAY(array, nb_elems)\
+    array = (InputStream **)grow_array(array, sizeof(*array), &nb_elems, nb_elems + 1)
+
+void add_input_streams(AVFormatContext *ic) 
+{
+	int i, ret;
+	for (i = 0; i < ic->nb_streams; i++) {
+		AVStream *st = ic->streams[i];
+		AVCodecParameters *par = st->codecpar;
+		InputStream *ist = (InputStream *)av_mallocz(sizeof(*ist));
+		if (!ist) {
+			OutputDebugString("can not alloc InputStream *ist, insufficient memory!\n");
+			return;
+		}
+		GROW_ARRAY(input_streams, nb_input_streams);
+		input_streams[nb_input_streams - 1] = ist;
+		ist->st = st;
+		ist->dec = avcodec_find_decoder(st->codecpar->codec_id);
+		ist->filter_in_rescale_delta_last = AV_NOPTS_VALUE;
+		ist->dec_ctx = avcodec_alloc_context3(ist->dec);
+		if (!ist->dec_ctx) {
+			OutputDebugString("Error allocating the decoder context.\n");
+			return;
+		}
+		ret = avcodec_parameters_to_context(ist->dec_ctx, par);
+		if (ret < 0) {
+			OutputDebugString("Error initializing the decoder context.\n");
+			return;
+		}
+		switch (par->codec_type) {
+		case AVMEDIA_TYPE_VIDEO:
+			if (!ist->dec)
+				ist->dec = avcodec_find_decoder(par->codec_id);
+			ist->dec_ctx->framerate = st->avg_frame_rate;
+			break;
+		}
+		ret = avcodec_parameters_from_context(par, ist->dec_ctx);
+		if (ret < 0) {
+			OutputDebugString("Error initializing the decoder context.\n");
+			return;
+		}
+	}
+	
+}
+int open_input_file(const char *filename) 
+{
+	InputFile *f;
+	AVFormatContext *ic;
+	int err,i, ret;
+	char temp_buf[255];
+
+	ic = avformat_alloc_context();
+	if (!ic) {
+		OutputDebugString(" avformat_alloc_context error, ENOMEM");
+		return -1;
+	}
+	err = avformat_open_input(&ic, filename, 0, 0);
+	if (err < 0) {
+		sprintf(temp_buf, "avformat_open_input error!\n");
+		AfxMessageBox(temp_buf);
+		return err;
+	}
+// 	for (i = 0; i < ic->nb_streams; i++) {
+// 		avcodec_find_decoder(st->codecpar->codec_id);
+// 	}
+	ret = avformat_find_stream_info(ic, NULL);
+	if (ret < 0) {
+		sprintf(temp_buf, "%s: could not find codec parameters\n", filename);
+		OutputDebugString(temp_buf);
+		AfxMessageBox(temp_buf);
+		if (ic->nb_streams == 0) {
+			avformat_close_input(&ic);
+			return -1;
+		}
+	}
+	add_input_streams(ic);
+	av_dump_format(ic, 0, filename, 0);
+	f = (InputFile *)av_mallocz(sizeof(*f));
+	if (!f) {
+		OutputDebugString("insufficient memory, InputFile f not be allocate!\n");
+		return -1;
+	}
+	f->ctx = ic;
+	f->ist_index = nb_input_streams - ic->nb_streams;
+	f->nb_streams = ic->nb_streams;
+
+}
 int CMFC_ffmpeg_streamerDlg::OpenInput(const char *pSrc = NULL)
 {
 	AVFormatContext *pifmt_ctx = NULL;
