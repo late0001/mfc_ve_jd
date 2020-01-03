@@ -1028,6 +1028,8 @@ void *grow_array(void *array, int elem_size, int *size, int new_size)
 void add_input_streams(AVFormatContext *ic) 
 {
 	int i, ret;
+	char temp_buf[255] = {0};
+	in_cvinfo.videoindex = -1;
 	for (i = 0; i < ic->nb_streams; i++) {
 		AVStream *st = ic->streams[i];
 		AVCodecParameters *par = st->codecpar;
@@ -1056,6 +1058,7 @@ void add_input_streams(AVFormatContext *ic)
 			if (!ist->dec)
 				ist->dec = avcodec_find_decoder(par->codec_id);
 			ist->dec_ctx->framerate = st->avg_frame_rate;
+			in_cvinfo.videoindex = i;
 			break;
 		}
 		ret = avcodec_parameters_from_context(par, ist->dec_ctx);
@@ -1063,6 +1066,10 @@ void add_input_streams(AVFormatContext *ic)
 			OutputDebugString("Error initializing the decoder context.\n");
 			return;
 		}
+	}
+	if (in_cvinfo.videoindex == -1) {
+		sprintf(temp_buf, "Didn't find a video stream.\n");
+		OutputDebugString(temp_buf);
 	}
 	
 }
@@ -1087,6 +1094,7 @@ int open_input_file(const char *filename)
 // 	for (i = 0; i < ic->nb_streams; i++) {
 // 		avcodec_find_decoder(st->codecpar->codec_id);
 // 	}
+	in_cvinfo.pifmt_ctx = ic;
 	ret = avformat_find_stream_info(ic, NULL);
 	if (ret < 0) {
 		sprintf(temp_buf, "%s: could not find codec parameters\n", filename);
@@ -1109,41 +1117,20 @@ int open_input_file(const char *filename)
 	f->nb_streams = ic->nb_streams;
 
 }
+
 int CMFC_ffmpeg_streamerDlg::OpenInput(const char *pSrc = NULL)
 {
 	AVFormatContext *pifmt_ctx = NULL;
-	AVOutputFormat *pOutAVFmt = NULL;
-	AVPacket pkt;
 	int ret;
 	int i;
-	int isOpen = 0;
-	int	videoindex;
 	char temp_buf[255];
-	if(pSrc == NULL) 
+	if (pSrc == NULL)
 		if (m_file_path != "") {
 			pSrc = m_file_path;
 		}
-	//AfxMessageBox(pSrc);
-	//
 
-	//
-	
-	//pFormatCtx = avformat_alloc_context();
-	/* 打开输入多媒体文件 */
-	if ((ret = avformat_open_input(&pifmt_ctx, pSrc, 0, 0)) < 0)
-	{
-		sprintf(temp_buf, "avformat_open_input error!\n");
-		AfxMessageBox(temp_buf);
-		logd(temp_buf);
-		return ret;
-	}
-	in_cvinfo.pifmt_ctx = pifmt_ctx;
-	if ((ret = avformat_find_stream_info(pifmt_ctx, NULL)) < 0) {
-		sprintf(temp_buf, "Cannot find stream information\n");
-		logd(temp_buf);
-		return ret;
-	}
-
+	open_input_file(pSrc);
+	pifmt_ctx = in_cvinfo.pifmt_ctx;
 	if (pifmt_ctx->duration != AV_NOPTS_VALUE) {
 		int hours, mins, secs, us;
 		int64_t duration = pifmt_ctx->duration + 5000;
@@ -1160,24 +1147,12 @@ int CMFC_ffmpeg_streamerDlg::OpenInput(const char *pSrc = NULL)
 	// Setting slider
 	m_ptsSlider.SetRange(0, in_cvinfo.video_secs);
 	m_ptsSlider.SetTicFreq(1);
-	videoindex = -1;
-	for (i = 0; i < pifmt_ctx->nb_streams; i++)
-		if (pifmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-			videoindex = i;
-			break;
-		}
-	if (videoindex == -1) {
-		sprintf(temp_buf, "Didn't find a video stream.\n");
-		AfxMessageBox(temp_buf);
-		return -1;
-	}
-	in_cvinfo.videoindex = videoindex;
+	
 	/* 打印输入多媒体文件的信息 */
 	av_dump_format(pifmt_ctx, 0, pSrc, 0);
 	return 0;
-end:
-	return -1;
 }
+
 int CMFC_ffmpeg_streamerDlg::CloseInput()
 {
 	AVFormatContext *pifmt_ctx = NULL;
@@ -1754,7 +1729,7 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg, int64_t startTime, int64_t endTime, c
 
 		opkt.data = pkt.data;
 		opkt.size = pkt.size;
-		av_copy_packet_side_data(&opkt, &pkt);
+		//av_copy_packet_side_data(&opkt, &pkt);
 
 		sprintf(temp_buf, " 222>>> pts = %lld, dts = %lld\n", pkt.pts, pkt.dts);
 		OutputDebugString(temp_buf);
