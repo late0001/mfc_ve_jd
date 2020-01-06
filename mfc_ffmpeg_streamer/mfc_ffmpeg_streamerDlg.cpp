@@ -1001,6 +1001,11 @@ typedef struct OutputStream {
 	// The encoder have been initialized and the stream
 	// parameters are set in the AVStream.
 	int initialized;
+	/* stats */
+	// combined size of all the packets written
+	uint64_t data_size;
+	// number of packets send to the muxer
+	uint64_t packets_written;
 } OutputStream;
 
 typedef struct InputStream {
@@ -1024,10 +1029,12 @@ typedef struct InputFile {
 
 typedef struct OutputFile {
 	AVFormatContext *ctx;
+	AVDictionary *opts;
 	int ost_index;       /* index of the first stream in output_streams */
 
 	int64_t recording_time; //desired length of the resulting file in microseconds == AV_TIME_BASE units
 	int64_t start_time; //start time in microseconds == AV_TIME_BASE units
+	int header_written;
 } OutputFile;
 
 InputStream **input_streams = NULL;
@@ -1036,6 +1043,7 @@ OutputStream **output_streams = NULL;
 int         nb_output_streams = 0;
 OutputFile   **output_files = NULL;
 int         nb_output_files = 0;
+int exit_on_error = 0;
 
 void *grow_array(void *array, int elem_size, int *size, int new_size)
 {
@@ -1477,6 +1485,7 @@ static int open_output_file(OptionsContext *o, const char *filename)
 	of->ost_index = nb_output_streams;
 	of->recording_time = o->recording_time;
 	of->start_time = o->start_time;
+	av_dict_copy(&of->opts, o->format_opts, 0);
 
 	err = avformat_alloc_output_context2(&oc, NULL, NULL, filename);
 	if (!oc) {
@@ -1628,6 +1637,59 @@ static int init_output_stream_streamcopy(OutputStream *ost)
 		break;
 	}
 	ost->mux_timebase = ist->st->time_base;
+}
+
+static void write_packet(OutputFile *of, AVPacket *pkt, OutputStream *ost, int unqueue)
+{
+	AVFormatContext *s = of->ctx;
+	AVStream *st = ost->st;
+	int ret;
+	char temp_buf[255] = {0};
+	av_packet_rescale_ts(pkt, ost->mux_timebase, ost->st->time_base);
+	if (!(s->oformat->flags & AVFMT_NOTIMESTAMPS)) {
+		if (pkt->dts != AV_NOPTS_VALUE &&
+			pkt->pts != AV_NOPTS_VALUE &&
+			pkt->dts > pkt->pts) {
+			sprintf(temp_buf, "Invalid DTS: %ld PTS: %ld in output stream %d:%d, replacing by guess\n",
+				pkt->dts, pkt->pts,
+				ost->file_index, ost->st->index);
+			LOG_DEBUG(temp_buf);
+			pkt->pts =
+				pkt->dts = pkt->pts + pkt->dts + ost->last_mux_dts + 1
+				- FFMIN3(pkt->pts, pkt->dts, ost->last_mux_dts + 1)
+				- FFMAX3(pkt->pts, pkt->dts, ost->last_mux_dts + 1);
+		}
+		if ((st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO || st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) &&
+			pkt->dts != AV_NOPTS_VALUE &&
+			!(st->codecpar->codec_id == AV_CODEC_ID_VP9 ) &&
+			ost->last_mux_dts != AV_NOPTS_VALUE) {
+			int64_t max = ost->last_mux_dts + !(s->oformat->flags & AVFMT_TS_NONSTRICT);
+			if (pkt->dts < max) {
+				int loglevel = max - pkt->dts > 2 || st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO ? AV_LOG_WARNING : AV_LOG_DEBUG;
+				av_log(s, loglevel, "Non-monotonous DTS in output stream "
+					"%d:%d; previous: %ld, current: %ld; ",
+					ost->file_index, ost->st->index, ost->last_mux_dts, pkt->dts);
+				if (exit_on_error) {
+					LOG_DEBUG("aborting.\n");
+					//exit_program(1);
+				}
+				av_log(s, loglevel, "changing to %ld. This may result "
+					"in incorrect timestamps in the output file.\n",
+					max);
+				if (pkt->pts >= pkt->dts)
+					pkt->pts = FFMAX(pkt->pts, max);
+				pkt->dts = max;
+			}
+		}
+	}
+	ost->last_mux_dts = pkt->dts;
+
+	ost->data_size += pkt->size;
+	ost->packets_written++;
+
+	pkt->stream_index = ost->index;
+	ret = av_interleaved_write_frame(s, pkt);
+	av_packet_unref(pkt);
 }
 static int check_init_output_file(OutputFile *of, int file_index)
 {

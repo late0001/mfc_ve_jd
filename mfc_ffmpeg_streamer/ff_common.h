@@ -13,6 +13,7 @@ extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/mem.h>
+#include <libavutil/fifo.h>
 #include "libavutil/mathematics.h"
 #include "libavutil/time.h"
 #include <libswscale/swscale.h>
