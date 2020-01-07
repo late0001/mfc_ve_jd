@@ -982,6 +982,11 @@ typedef struct OptionsContext {
 	int64_t stop_time;
 };
 
+enum {
+	ENCODER_FINISHED = 1,
+	MUXER_FINISHED = 2,
+} OSTFinished;
+
 typedef struct OutputStream {
 	int file_index;          /* file index */
 	AVStream *st;
@@ -1006,9 +1011,11 @@ typedef struct OutputStream {
 	uint64_t data_size;
 	// number of packets send to the muxer
 	uint64_t packets_written;
+	int finished;
 } OutputStream;
 
 typedef struct InputStream {
+	int file_index;
 	AVStream *st;
 	AVCodecContext *dec_ctx;
 	AVCodec *dec;
@@ -1039,6 +1046,8 @@ typedef struct OutputFile {
 
 InputStream **input_streams = NULL;
 int        nb_input_streams = 0;
+InputFile   **input_files = NULL;
+int        nb_input_files = 0;
 OutputStream **output_streams = NULL;
 int         nb_output_streams = 0;
 OutputFile   **output_files = NULL;
@@ -1099,6 +1108,7 @@ void add_input_streams(AVFormatContext *ic)
 		input_streams = (InputStream **)GROW_ARRAY(input_streams, nb_input_streams);
 		input_streams[nb_input_streams - 1] = ist;
 		ist->st = st;
+		ist->file_index = nb_input_files;
 		ist->dec = avcodec_find_decoder(st->codecpar->codec_id);
 		ist->filter_in_rescale_delta_last = AV_NOPTS_VALUE;
 		ist->dec_ctx = avcodec_alloc_context3(ist->dec);
@@ -1165,11 +1175,13 @@ int open_input_file(const char *filename)
 	}
 	add_input_streams(ic);
 	av_dump_format(ic, 0, filename, 0);
+	input_files = (InputFile **)GROW_ARRAY(input_files, nb_input_streams);
 	f = (InputFile *)av_mallocz(sizeof(*f));
 	if (!f) {
 		OutputDebugString("insufficient memory, InputFile f not be allocate!\n");
 		return -1;
 	}
+	input_files[nb_input_files - 1] = f;
 	f->ctx = ic;
 	f->ist_index = nb_input_streams - ic->nb_streams;
 	f->nb_streams = ic->nb_streams;
@@ -1459,6 +1471,13 @@ static OutputStream *new_audio_stream(OptionsContext *o, AVFormatContext *oc, in
 	ost = new_output_stream(o, oc, AVMEDIA_TYPE_AUDIO, source_index);
 	return ost;
 }
+
+static void close_output_stream(OutputStream *ost)
+{
+	OutputFile *of = output_files[ost->file_index];
+	ost->finished |= ENCODER_FINISHED;
+}
+
 static int open_output_file(OptionsContext *o, const char *filename) 
 {
 	AVFormatContext *oc;
@@ -1666,14 +1685,15 @@ static void write_packet(OutputFile *of, AVPacket *pkt, OutputStream *ost, int u
 			int64_t max = ost->last_mux_dts + !(s->oformat->flags & AVFMT_TS_NONSTRICT);
 			if (pkt->dts < max) {
 				int loglevel = max - pkt->dts > 2 || st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO ? AV_LOG_WARNING : AV_LOG_DEBUG;
-				av_log(s, loglevel, "Non-monotonous DTS in output stream "
+				sprintf(temp_buf, "Non-monotonous DTS in output stream "
 					"%d:%d; previous: %ld, current: %ld; ",
 					ost->file_index, ost->st->index, ost->last_mux_dts, pkt->dts);
+				LOG_DEBUG(temp_buf);
 				if (exit_on_error) {
 					LOG_DEBUG("aborting.\n");
 					//exit_program(1);
 				}
-				av_log(s, loglevel, "changing to %ld. This may result "
+				sprintf,(temp_buf, "changing to %ld. This may result "
 					"in incorrect timestamps in the output file.\n",
 					max);
 				if (pkt->pts >= pkt->dts)
@@ -1713,7 +1733,7 @@ static int check_init_output_file(OutputFile *of, int file_index)
 	of->header_written = 1;
 
 	av_dump_format(of->ctx, file_index, of->ctx->filename, 1);
-
+#if 0
 	/* flush the muxing queues */
 	for (i = 0; i < of->ctx->nb_streams; i++) {
 		OutputStream *ost = output_streams[of->ost_index + i];
@@ -1728,7 +1748,7 @@ static int check_init_output_file(OutputFile *of, int file_index)
 			write_packet(of, &pkt, ost, 1);
 		}
 	}
-
+#endif
 	return 0;
 }
 static int init_output_stream(OutputStream *ost, char *error, int error_len)
@@ -1745,6 +1765,48 @@ static int init_output_stream(OutputStream *ost, char *error, int error_len)
 	if (ret < 0)
 		return ret;
 	return ret;
+}
+
+static int process_input(int file_index)
+{
+	int ret;
+	AVPacket pkt;
+	InputFile *ifile = input_files[file_index];
+	ret = av_read_frame(ifile->ctx, &pkt)
+
+}
+static OutputStream *choose_output(void) 
+{
+	int i;
+	char temp_buf[255] = { 0 };
+	int64_t opts_min = INT64_MAX;
+	OutputStream *ost_min = NULL;
+	for (i = 0; i < nb_input_streams; i++) {
+		OutputStream *ost = output_streams[i];
+		int64_t opts = ost->st->cur_dts == AV_NOPTS_VALUE ? INT64_MIN :
+			av_rescale_q(ost->st->cur_dts, ost->st->time_base, AV_TIME_BASE_Q1);
+		if(ost->st->cur_dts == AV_NOPTS_VALUE){
+			sprintf(temp_buf,"cur_dts is invalid (this is harmless if it occurs once at the start per stream)\n");
+			LOG_DEBUG(temp_buf);
+		}
+		if (!ost->initialized) return ost;
+		if (!ost->finished && opts < opts_min) {
+			opts_min = opts;
+			ost_min = ost;
+		}
+	}
+	return ost_min;
+}
+static int transcode_step(void)
+{
+	OutputStream *ost;
+	InputStream *ist = NULL;
+	int ret;
+
+	ost = choose_output();
+	ist = input_streams[ost->source_index];
+	ret = process_input(ist->file_index);
+
 }
 /*
 * startTime start time in microseconds 
@@ -1785,6 +1847,7 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg, int64_t startTime, int64_t endTime, c
 
 		recording_time = endTime - startTime;
 #endif
+		open_input_file(pSrc);
 		init_options(&o);
 		open_input_file(pDst);
 		for (i = 0; i < nb_input_streams; i++) {
