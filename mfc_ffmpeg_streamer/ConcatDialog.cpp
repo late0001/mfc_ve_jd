@@ -116,7 +116,6 @@ void CConcatDlg::OnClickListfile(NMHDR *pNMHDR, LRESULT *pResult)
 		CString defaultDir = ".\\";	//默认打开的文件路径
 		CString fileName = "";			//默认打开的文件名
 		CString filter = "文件 (*.*)|*.*||";	//文件过虑的类型
-		LV_ITEM lvitem;
 		char buf[255] = { 0 };
 		int pos;
 		int len;
