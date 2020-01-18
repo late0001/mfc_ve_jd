@@ -14,7 +14,6 @@
 #define new DEBUG_NEW
 #endif
 
-
 #define ENABLE_YUVFILE 0
 
 
@@ -1072,11 +1071,26 @@ int exit_on_error = 0;
 float dts_delta_threshold = 10;
 float dts_error_threshold = 3600 * 30;
 
-void exit_program(int x) {
+
+static void(*program_exit)(int ret);
+void register_exit(void(*cb)(int ret))
+{
+	program_exit = cb;
+}
+
+void exit_program(int ret)
+{
+
 	OutputDebugString("Need Terminate the program\n");
+	if (ret > 0)
+		AfxMessageBox("Met with serious bug");
+	if (program_exit)
+		program_exit(ret);
+	//exit(ret);
 }
 
 #if 1
+
 void *grow_array(void *array, int elem_size, int *size, int new_size)
 {
 	uint8_t *tmp = NULL;
@@ -1086,8 +1100,8 @@ void *grow_array(void *array, int elem_size, int *size, int new_size)
 		return NULL;
 	}
 	if (*size < new_size) {
-		 //tmp = (uint8_t *)av_realloc_array(array, new_size, elem_size);
-		tmp = (uint8_t *)realloc(array, new_size * elem_size + !(new_size * elem_size));
+		 tmp = (uint8_t *)av_realloc_array(array, new_size, elem_size);
+		//tmp = (uint8_t *)realloc(array, new_size * elem_size + !(new_size * elem_size));
 		if (!tmp) {
 			av_log(NULL, AV_LOG_ERROR, "Could not alloc buffer.\n");
 			exit_program(1);
@@ -1139,6 +1153,67 @@ void **grow_array(void **array, int elem_size, int *size, int new_size)
 	AfxMessageBox(buf); \
 	}while(0);
 #define LOG_DEBUG(buf)  OutputDebugString(buf)
+
+
+
+static void ffmpeg_cleanup(int ret)
+{
+	int i, j;
+
+	/* close files */
+	for (i = 0; i < nb_output_files; i++) {
+		OutputFile *of = output_files[i];
+		AVFormatContext *s;
+		if (!of)
+			continue;
+		s = of->ctx;
+		if (s && s->oformat && !(s->oformat->flags & AVFMT_NOFILE))
+			avio_closep(&s->pb);
+		avformat_free_context(s);
+		av_dict_free(&of->opts);
+
+		av_freep(&output_files[i]);
+	}
+	for (i = 0; i < nb_output_streams; i++) {
+		OutputStream *ost = output_streams[i];
+
+		if (!ost)
+			continue;
+
+		av_dict_free(&ost->encoder_opts);
+
+		av_parser_close(ost->parser);
+		avcodec_free_context(&ost->parser_avctx);
+
+		avcodec_free_context(&ost->enc_ctx);
+		avcodec_parameters_free(&ost->ref_par);
+
+		av_freep(&output_streams[i]);
+	}
+
+	for (i = 0; i < nb_input_files; i++) {
+		avformat_close_input(&input_files[i]->ctx);
+		av_freep(&input_files[i]);
+	}
+	for (i = 0; i < nb_input_streams; i++) {
+		InputStream *ist = input_streams[i];
+		avcodec_free_context(&ist->dec_ctx);
+		av_freep(&input_streams[i]);
+	}
+
+//	av_freep(&input_streams);
+
+//	av_freep(&input_files);
+//	av_freep(&output_streams);
+//	av_freep(&output_files);
+
+//	avformat_network_deinit();
+
+	if (ret) {
+		OutputDebugString("Conversion failed!\n");
+	}
+	//ffmpeg_exited = 1;
+}
 
 void add_input_streams(AVFormatContext *ic) 
 {
@@ -1999,8 +2074,8 @@ static int check_output_constraints(InputStream *ist, OutputStream *ost)
 	char ts_buf[AV_TS_MAX_STRING_SIZE]={0};
 	OutputFile *of = output_files[ost->file_index];
 	int ist_index = input_files[ist->file_index]->ist_index + ist->st->index;
-	sprintf(temp_buf, "qjd  %s(%d) +++++++++++++  >>> a3=%d [ist_index=%d] ist->pts=%" PRId64 ", ist->pts=%s\n",
-		__func__, __LINE__, a3, ist_index, ist->pts, av_ts_make_string(ts_buf, ist->pts));
+	sprintf(temp_buf, "qjd  %s(%d) +++++++++++++  >>> a3=%d [ist_index=%d] ist->pts=%" PRId64 "\n" /*", ist->pts=%s\n"*/,
+		__func__, __LINE__, a3, ist_index, ist->pts/*, av_ts_make_string(ts_buf, ist->pts)*/);
 	LOG_DEBUG(temp_buf);
 	if (ost->source_index != ist_index)
 		return 0;
@@ -2055,7 +2130,7 @@ static int process_input_packet(InputStream *ist, const AVPacket *pkt, int no_eo
 
 	if (pkt && pkt->dts != AV_NOPTS_VALUE) {
 		ist->next_dts = ist->dts = av_rescale_q(pkt->dts, ist->st->time_base, AV_TIME_BASE_Q1);
-			ist->next_pts = ist->pts = ist->dts;
+		ist->next_pts = ist->pts = ist->dts;
 	}
 
 	
@@ -2125,7 +2200,7 @@ static int process_input(int file_index)
 	ist = input_streams[ifile->ist_index + pkt.stream_index];
 	ist->data_size += pkt.size;
 	ist->nb_packets++;
-	sprintf(temp_buf, "%d", ist->nb_packets);
+	sprintf(temp_buf, "%lld", ist->nb_packets);
 	SendMessage(ghWnd, WM_USER_MSG1, 0, (LPARAM)temp_buf);
 	/* add the stream-global side data to the first packet */
 	if (ist->nb_packets == 1) {
@@ -2292,6 +2367,7 @@ static int transcode_step(void)
 	return ret;
 }
 
+
 void transcode() 
 {
 	int ret, i;
@@ -2322,6 +2398,7 @@ void transcode()
 		}
 	}
 	LOG_DEBUG("av_write_trailer end <=============\n");
+
 }
 /*
 * startTime start time in microseconds 
@@ -2337,7 +2414,6 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg, int64_t startTime, int64_t endTime, c
 	int frame_cnt=0;
 	int isOpen = 0;
 	char temp_buf[255];
-	int64_t recording_time;
 	char error[1024] = { 0 };
 
 	pifmt_ctx = in_cvinfo.pifmt_ctx;
@@ -2350,6 +2426,7 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg, int64_t startTime, int64_t endTime, c
 	if (pofmt_ctx)
 		avformat_free_context(pofmt_ctx);
 
+	register_exit(ffmpeg_cleanup);
 	open_input_file(pSrc);
 	init_options(&o);
 	o.start_time = startTime;
@@ -2362,7 +2439,8 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg, int64_t startTime, int64_t endTime, c
 		ret = init_output_stream(output_streams[i], error, sizeof(error));
 	}
 
-	transcode();	
+	transcode();
+	exit_program(0);
 	return ret;
 }
 #if 0
