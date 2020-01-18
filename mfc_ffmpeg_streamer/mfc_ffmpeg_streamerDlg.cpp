@@ -1201,11 +1201,11 @@ static void ffmpeg_cleanup(int ret)
 		av_freep(&input_streams[i]);
 	}
 
-//	av_freep(&input_streams);
+	av_freep(&input_streams);
 
-//	av_freep(&input_files);
-//	av_freep(&output_streams);
-//	av_freep(&output_files);
+	av_freep(&input_files);
+	av_freep(&output_streams);
+	av_freep(&output_files);
 
 //	avformat_network_deinit();
 
@@ -1318,6 +1318,64 @@ int open_input_file(const char *filename)
 	return 0;
 }
 
+int open_input_file2(const char *filename)
+{
+	InputFile *f;
+	AVFormatContext *ic;
+	int err, i, ret;
+	char temp_buf[255];
+
+	ic = avformat_alloc_context();
+	if (!ic) {
+		OutputDebugString(" avformat_alloc_context error, ENOMEM");
+		return -1;
+	}
+	err = avformat_open_input(&ic, filename, 0, 0);
+	if (err < 0) {
+		sprintf(temp_buf, "avformat_open_input error!\n");
+		AfxMessageBox(temp_buf);
+		return err;
+	}
+	// 	for (i = 0; i < ic->nb_streams; i++) {
+	// 		avcodec_find_decoder(st->codecpar->codec_id);
+	// 	}
+	in_cvinfo.pifmt_ctx = ic;
+	ret = avformat_find_stream_info(ic, NULL);
+	if (ret < 0) {
+		sprintf(temp_buf, "%s: could not find codec parameters\n", filename);
+		OutputDebugString(temp_buf);
+		AfxMessageBox(temp_buf);
+		if (ic->nb_streams == 0) {
+			avformat_close_input(&ic);
+			return -1;
+		}
+	}
+	in_cvinfo.videoindex = -1;
+	for (i = 0; i < ic->nb_streams; i++)
+		if (ic->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+			in_cvinfo.videoindex = i;
+			break;
+		}
+	/*	for (i = 0; i < ic->nb_streams; i++) {
+		AVStream *st = ic->streams[i];
+		AVCodecParameters *par = st->codecpar;
+		
+		switch (par->codec_type) {
+		case AVMEDIA_TYPE_VIDEO:
+			in_cvinfo.videoindex = i;
+			break;
+		}
+	}*/
+	if (in_cvinfo.videoindex == -1) {
+		sprintf(temp_buf, "Didn't find a video stream.\n");
+		OutputDebugString(temp_buf);
+	}
+
+	av_dump_format(ic, 0, filename, 0);
+
+	return 0;
+}
+
 int CMFC_ffmpeg_streamerDlg::OpenInput(const char *pSrc = NULL)
 {
 	AVFormatContext *pifmt_ctx = NULL;
@@ -1328,7 +1386,7 @@ int CMFC_ffmpeg_streamerDlg::OpenInput(const char *pSrc = NULL)
 			pSrc = m_file_path;
 		}
 
-	ret = open_input_file(pSrc);
+	ret = open_input_file2(pSrc);
 	pifmt_ctx = in_cvinfo.pifmt_ctx;
 	if (pifmt_ctx->duration != AV_NOPTS_VALUE) {
 		int hours, mins, secs, us;
@@ -3004,10 +3062,10 @@ void CMFC_ffmpeg_streamerDlg::OnClickedMovieClip()
 		strcpy(movclip.sv_filepath, "E:\\xxwork\\test.mp4");
 #endif
 	}
-	in_cvinfo.infile_name = "E:\\xxwork\\517951777_4.mp4";
+	//in_cvinfo.infile_name = "E:\\xxwork\\517951777_4.mp4";
 	// TODO: 在此添加控件通知处理程序代码
-	//cutVideo(this, movclip.start_time * AV_TIME_BASE, movclip.end_time * AV_TIME_BASE, in_cvinfo.infile_name, movclip.sv_filepath);
-	cutVideo(this, 10000000, 33000000, in_cvinfo.infile_name, movclip.sv_filepath);
+	cutVideo(this, movclip.start_time * AV_TIME_BASE, movclip.end_time * AV_TIME_BASE, in_cvinfo.infile_name, movclip.sv_filepath);
+	//cutVideo(this, 10000000, 33000000, in_cvinfo.infile_name, movclip.sv_filepath);
 }
 
 
