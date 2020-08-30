@@ -1251,6 +1251,16 @@ void add_input_streams(AVFormatContext *ic)
 		case AVMEDIA_TYPE_VIDEO:
 			if (!ist->dec)
 				ist->dec = avcodec_find_decoder(par->codec_id);
+#if 0//FF_API_EMU_EDGE
+			if (av_codec_get_lowres(st->codec)) {
+				av_codec_set_lowres(ist->dec_ctx, av_codec_get_lowres(st->codec));
+				ist->dec_ctx->width = st->codecpar->width;
+				ist->dec_ctx->height = st->codecpar->height;
+				//ist->dec_ctx->coded_width = st->codec->coded_width;
+				//ist->dec_ctx->coded_height = st->codec->coded_height;
+				ist->dec_ctx->flags |= CODEC_FLAG_EMU_EDGE;
+			}
+#endif
 			ist->dec_ctx->framerate = st->avg_frame_rate;
 			in_cvinfo.videoindex = i;
 			break;
@@ -1320,7 +1330,7 @@ int open_input_file(const char *filename)
 
 int open_input_file2(const char *filename)
 {
-	InputFile *f;
+//	InputFile *f;
 	AVFormatContext *ic;
 	int err, i, ret;
 	char temp_buf[255];
@@ -1645,7 +1655,7 @@ static OutputStream *new_output_stream(OptionsContext *o, AVFormatContext *oc, e
 	ost->enc_ctx = avcodec_alloc_context3(ost->enc);
 	ost->enc_ctx->codec_type = type;
 
-	ost->ref_par = avcodec_parameters_alloc();
+	ost->ref_par = avcodec_parameters_alloc(); // 后面init_output_stream_streamcopy 用上再赋值
 	ost->source_index = source_index;
 	ost->last_mux_dts = AV_NOPTS_VALUE;
 }
@@ -1811,7 +1821,7 @@ static int init_output_stream_streamcopy(OutputStream *ost)
 		ost->frame_rate.num = 0;
 		ost->frame_rate.den = 0;
 	}
-	ost->st->avg_frame_rate = ost->frame_rate;
+	ost->st->avg_frame_rate = ost->frame_rate; // num = 0, den = 0
 	ret = avformat_transfer_internal_stream_timing_info(of->ctx->oformat, ost->st, ist->st, (AVTimebaseSource)copy_tb);
 	if (ret < 0)
 		return ret;
@@ -2402,6 +2412,7 @@ static OutputStream *choose_output(void)
 	}
 	return ost_min;
 }
+
 static int transcode_step(void)
 {
 	OutputStream *ost;
@@ -2857,10 +2868,10 @@ void CMFC_ffmpeg_streamerDlg::OnClickedBtnSave()
 	// TODO: 在此添加控件通知处理程序代码
 	BOOL isOpen = FALSE;	//是否打开(否则为保存)
 	CString defaultDir = "E:\\";	//默认打开的文件路径
-	CString fileName = "test.avi";	//默认打开的文件名
+	CString fileName = "test.mp4";	//默认打开的文件名
 	CString filter = "文件 (*.*)|*.*||";	//文件过虑的类型
 	CFileDialog openFileDlg(isOpen, 0, defaultDir + fileName, OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT, filter, NULL);
-	openFileDlg.GetOFN().lpstrInitialDir = "E:\\test.avi";
+	openFileDlg.GetOFN().lpstrInitialDir = "E:\\test.mp4";
 	INT_PTR result = openFileDlg.DoModal();
 	CString filePath = defaultDir + fileName;
 	if (result == IDOK) {
