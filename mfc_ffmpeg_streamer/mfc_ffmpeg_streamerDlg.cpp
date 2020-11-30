@@ -8,7 +8,7 @@
 #include "mfc_ffmpeg_streamerDlg.h"
 #include "afxdialogex.h"
 #include "ConcatDialog.h"
-
+#include "compat/atomics/win32/stdatomic.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -212,7 +212,17 @@ HCURSOR CMFC_ffmpeg_streamerDlg::OnQueryDragIcon()
 	return static_cast<HCURSOR>(m_hIcon);
 }
 
-
+void ve_log(void *avcl, int level, const char *fmt, ...)
+{
+	char def_level = AV_LOG_DEBUG;
+	char buf[512];
+	va_list argp;
+	va_start(argp, fmt);
+	vsnprintf(buf, 512, fmt, argp);
+	va_end(argp);
+	if (level <= def_level)
+		OutputDebugString(buf);
+}
 
 
 #define ENABLE_YUVFILE  0 //1
@@ -1070,6 +1080,8 @@ int         nb_output_files = 0;
 int exit_on_error = 0;
 float dts_delta_threshold = 10;
 float dts_error_threshold = 3600 * 30;
+#define ATOMIC_VAR_INIT(value) (value)
+static atomic_int transcode_init_done = ATOMIC_VAR_INIT(0);
 
 
 static void(*program_exit)(int ret);
@@ -1771,7 +1783,7 @@ static int open_output_file(OptionsContext *o, const char *filename)
 	return 0;
 }
 
-static int init_input_stream(int ist_index)
+static int init_input_stream(int ist_index, char *error, int error_len)
 {
 	int ret;
 	InputStream *ist = input_streams[ist_index];
@@ -2166,15 +2178,16 @@ static int process_input_packet(InputStream *ist, const AVPacket *pkt, int no_eo
 	char temp_buf[255] = { 0 };
 	AVPacket avpkt;
 	if (!ist->saw_first_ts) {
-		sprintf(temp_buf, "qjd  %s(%d) ++++++++++++ ==> ist->st->avg_frame_rate.num=%d, ist->dec_ctx->has_b_frames=%d, av_q2d(ist->st->avg_frame_rate)=%f, pkt->pts=%" PRId64 "\n",
+		ve_log(NULL, AV_LOG_INFO, "qjd  %s(%d) ++++++++++++ ==> ist->st->avg_frame_rate.num=%d, "
+			"ist->dec_ctx->has_b_frames=%d, av_q2d(ist->st->avg_frame_rate)=%f, pkt->pts=%" PRId64 "\n",
 			__func__, __LINE__, ist->st->avg_frame_rate.num, ist->dec_ctx->has_b_frames, av_q2d(ist->st->avg_frame_rate), pkt->pts);
-		LOG_DEBUG(temp_buf);
+		
 		ist->dts = ist->st->avg_frame_rate.num ? -ist->dec_ctx->has_b_frames * AV_TIME_BASE / av_q2d(ist->st->avg_frame_rate) : 0;
 		ist->pts = 0;
 		if (pkt && pkt->pts != AV_NOPTS_VALUE ) {
-			sprintf(temp_buf, "qjd  %s(%d) ++++++++++++ ==> pkt->pts=%" PRId64 ", ist->dts=%" PRId64 "\n",
+			ve_log(NULL, AV_LOG_INFO, "qjd  %s(%d) ++++++++++++ ==> pkt->pts=%" PRId64 ", ist->dts=%" PRId64 "\n",
 				__func__, __LINE__, pkt->pts, ist->dts);
-			LOG_DEBUG(temp_buf);
+
 			ist->dts += av_rescale_q(pkt->pts, ist->st->time_base, AV_TIME_BASE_Q1);
 			ist->pts = ist->dts; //unused but better to set it to a value thats not totally wrong
 		}
@@ -2234,12 +2247,12 @@ static int process_input_packet(InputStream *ist, const AVPacket *pkt, int no_eo
 		OutputStream *ost = output_streams[i];
 		if (!check_output_constraints(ist, ost)){
 			if (a3 == 673) {
-				LOG_DEBUG("------------------\n");
+				ve_log(NULL, AV_LOG_INFO, "------------------\n");
 			}
 			continue;
 		} else {
 			if (a3 == 673)
-				LOG_DEBUG("+++++++++++++++++\n");
+				ve_log(NULL, AV_LOG_INFO, "+++++++++++++++++\n");
 		}
 		do_streamcopy(ist, ost, pkt);
 	}
@@ -2260,9 +2273,8 @@ static int process_input(int file_index)
 
 	is = ifile->ctx;
 	ret = av_read_frame(ifile->ctx, &pkt);
-	sprintf(temp_buf, "qjd  %s(%d) ==> pkt.pts=%" PRId64 ",pkt.dts=%" PRId64 ", pkt->stream_index=%d \n",
+	ve_log(NULL, AV_LOG_INFO, "qjd  %s(%d) ==> pkt.pts=%" PRId64 ",pkt.dts=%" PRId64 ", pkt->stream_index=%d \n",
 		__func__, __LINE__, pkt.pts, pkt.dts, pkt.stream_index);
-	LOG_DEBUG(temp_buf);
 	if (ret < 0) return ret;
 	
 	ist = input_streams[ifile->ist_index + pkt.stream_index];
@@ -2289,18 +2301,18 @@ static int process_input(int file_index)
 				memcpy(dst_data, src_sd->data, src_sd->size);
 		}
 	}
-	sprintf(temp_buf, "qjd  %s(%d) ==> ifile->ts_offset=%" PRId64  "\n",
+	ve_log(NULL, AV_LOG_INFO, "qjd  %s(%d) ==> ifile->ts_offset=%" PRId64  "\n",
 		__func__, __LINE__, ifile->ts_offset);
-	LOG_DEBUG(temp_buf);
+
 	if (pkt.dts != AV_NOPTS_VALUE)
 		pkt.dts += av_rescale_q(ifile->ts_offset, AV_TIME_BASE_Q1, ist->st->time_base);
 	if (pkt.pts != AV_NOPTS_VALUE)
 		pkt.pts += av_rescale_q(ifile->ts_offset, AV_TIME_BASE_Q1, ist->st->time_base);
 
 	pkt_dts = av_rescale_q_rnd(pkt.dts, ist->st->time_base, AV_TIME_BASE_Q1, (enum AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
-	sprintf(temp_buf, "qjd  %s(%d)111111111 ==> pkt.pts=%" PRId64 ",pkt.dts=%" PRId64 " \n",
+	ve_log(NULL, AV_LOG_INFO, "qjd  %s(%d)111111111 ==> pkt.pts=%" PRId64 ",pkt.dts=%" PRId64 " \n",
 		__func__, __LINE__, pkt.pts, pkt.dts);
-	LOG_DEBUG(temp_buf);
+	
 	if ((ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO ||
 		ist->dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO) &&
 		pkt_dts != AV_NOPTS_VALUE && ist->next_dts == AV_NOPTS_VALUE && 
@@ -2309,35 +2321,35 @@ static int process_input(int file_index)
 		if (delta < -1LL * dts_delta_threshold*AV_TIME_BASE ||
 			delta >  1LL * dts_delta_threshold*AV_TIME_BASE) {
 			ifile->ts_offset -= delta;
-			sprintf(temp_buf,
+			ve_log(NULL, AV_LOG_INFO,
 				"Inter stream timestamp discontinuity %lld, new offset= %lld\n",
 				delta, ifile->ts_offset);
-			LOG_DEBUG(temp_buf);
+			
 			pkt.dts -= av_rescale_q(delta, AV_TIME_BASE_Q1, ist->st->time_base);
 			if (pkt.pts != AV_NOPTS_VALUE)
 				pkt.pts -= av_rescale_q(delta, AV_TIME_BASE_Q1, ist->st->time_base);
 		}
 	}
-	sprintf(temp_buf, "qjd  %s(%d)33333333331++++++++++++ ==> ifile->time_base=[%d/%d], ist->st->time_base=[%d/%d]\n",
+	ve_log(NULL, AV_LOG_INFO, "qjd  %s(%d)33333333331++++++++++++ ==> ifile->time_base=[%d/%d], ist->st->time_base=[%d/%d]\n",
 		__func__, __LINE__, ifile->time_base.num, ifile->time_base.den, ist->st->time_base.num, ist->st->time_base.den);
-	LOG_DEBUG(temp_buf);
+
 	duration = av_rescale_q(ifile->duration, ifile->time_base, ist->st->time_base);
 	if (pkt.pts != AV_NOPTS_VALUE) {
 		pkt.pts += duration;
 		ist->max_pts = FFMAX(pkt.pts, ist->max_pts);
 		ist->min_pts = FFMIN(pkt.pts, ist->min_pts);
 	}
-	sprintf(temp_buf, "qjd  %s(%d)33333333333++++++++++++ ==> pkt->pts=%" PRId64 ",pkt->dts=%" PRId64 ", ifile->duration=%" PRId64 ", duration= %" PRId64 "\n",
+	ve_log(NULL, AV_LOG_INFO, "qjd  %s(%d)33333333333++++++++++++ ==> pkt->pts=%" PRId64 ",pkt->dts=%" PRId64 ", ifile->duration=%" PRId64 ", duration= %" PRId64 "\n",
 		__func__, __LINE__, pkt.pts, pkt.dts, ifile->duration, duration);
-	LOG_DEBUG(temp_buf);
+
 	if (pkt.dts != AV_NOPTS_VALUE)
 		pkt.dts += duration;
-	sprintf(temp_buf, "qjd  %s(%d)33333333333++++++++++++ ==> pkt->pts=%" PRId64 ",pkt->dts=%" PRId64 " \n",
+	ve_log(NULL, AV_LOG_INFO, "qjd  %s(%d)33333333333++++++++++++ ==> pkt->pts=%" PRId64 ",pkt->dts=%" PRId64 " \n",
 		__func__, __LINE__, pkt.pts, pkt.dts);
-	LOG_DEBUG(temp_buf);
-	sprintf(temp_buf, "qjd  %s(%d)33333333333++++++++++++ ==> ist->pts=%" PRId64 "\n",
+	
+	ve_log(NULL, AV_LOG_INFO, "qjd  %s(%d)33333333333++++++++++++ ==> ist->pts=%" PRId64 "\n",
 		__func__, __LINE__, ist->pts);
-	LOG_DEBUG(temp_buf);
+
 	pkt_dts = av_rescale_q_rnd(pkt.dts, ist->st->time_base, AV_TIME_BASE_Q1, (enum AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
 	if ((ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO ||
 		ist->dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO) &&
@@ -2348,10 +2360,10 @@ static int process_input(int file_index)
 				delta >  1LL * dts_delta_threshold*AV_TIME_BASE ||
 				pkt_dts + AV_TIME_BASE / 10 < FFMAX(ist->pts, ist->dts)) {
 				ifile->ts_offset -= delta;
-				sprintf(temp_buf,
+				ve_log(NULL, AV_LOG_INFO,
 					"timestamp discontinuity %lld, new offset= %lld\n",
 					delta, ifile->ts_offset);
-				LOG_DEBUG(temp_buf);
+				
 				pkt.dts -= av_rescale_q(delta, AV_TIME_BASE_Q1, ist->st->time_base);
 				if (pkt.pts != AV_NOPTS_VALUE)
 					pkt.pts -= av_rescale_q(delta, AV_TIME_BASE_Q1, ist->st->time_base);
@@ -2360,8 +2372,8 @@ static int process_input(int file_index)
 		else {
 			if (delta < -1LL * dts_error_threshold*AV_TIME_BASE ||
 				delta >  1LL * dts_error_threshold*AV_TIME_BASE) {
-				sprintf(temp_buf, "DTS %lld, next:%lld st:%d invalid dropping\n", pkt.dts, ist->next_dts, pkt.stream_index);
-				LOG_DEBUG(temp_buf);
+				ve_log(NULL, AV_LOG_INFO, "DTS %lld, next:%lld st:%d invalid dropping\n", pkt.dts, ist->next_dts, pkt.stream_index);
+
 				pkt.dts = AV_NOPTS_VALUE;
 			}
 			if (pkt.pts != AV_NOPTS_VALUE) {
@@ -2369,8 +2381,8 @@ static int process_input(int file_index)
 				delta = pkt_pts - ist->next_dts;
 				if (delta < -1LL * dts_error_threshold*AV_TIME_BASE ||
 					delta >  1LL * dts_error_threshold*AV_TIME_BASE) {
-					sprintf(temp_buf, "PTS %lld, next:%lld invalid dropping st:%d\n", pkt.pts, ist->next_dts, pkt.stream_index);
-					LOG_DEBUG(temp_buf);
+					ve_log(NULL, AV_LOG_INFO, "PTS %lld, next:%lld invalid dropping st:%d\n", pkt.pts, ist->next_dts, pkt.stream_index);
+	
 					pkt.pts = AV_NOPTS_VALUE;
 				}
 			}
@@ -2384,23 +2396,22 @@ static int process_input(int file_index)
 	return 0;
 }
 
+
 static OutputStream *choose_output(void) 
 {
 	int i;
 	char temp_buf[255] = { 0 };
 	int64_t opts_min = INT64_MAX;
 	OutputStream *ost_min = NULL;
-	for (i = 0; i < nb_output_streams; i++) {
+	for (i = 0; i < nb_output_streams; i++) {//查找输出流中最小的时间戳
 		OutputStream *ost = output_streams[i];
 		int64_t opts = ost->st->cur_dts == AV_NOPTS_VALUE ? INT64_MIN :
 			av_rescale_q(ost->st->cur_dts, ost->st->time_base, AV_TIME_BASE_Q1);
-		//sprintf(temp_buf, "qjd a3 = %d, ost->st->cur_dts = %I64d, output_streams[%d]\n", 
+		//ve_log(NULL, AV_LOG_INFO, "qjd a3 = %d, ost->st->cur_dts = %I64d, output_streams[%d]\n", 
 		//	a3, ost->st->cur_dts, i);
-		//LOG_DEBUG(temp_buf);
 		if(ost->st->cur_dts == AV_NOPTS_VALUE){
 			//FixMe
-			//sprintf(temp_buf,"cur_dts is invalid (this is harmless if it occurs once at the start per stream)\n");
-			//LOG_DEBUG(temp_buf);
+			//ve_log(NULL, AV_LOG_INFO,"cur_dts is invalid (this is harmless if it occurs once at the start per stream)\n");
 		}
 		if (!ost->initialized) {
 			return ost;
@@ -2435,7 +2446,46 @@ static int transcode_step(void)
 	ret = process_input(ist->file_index);
 	return ret;
 }
-
+int transcode_init()
+{
+	int ret = 0, i, j, k;
+	OutputStream *ost;
+	AVFormatContext *oc;
+	char error[1024] = { 0 };
+	/* init input streams */
+	for (i = 0; i < nb_input_streams; i++)
+		if ((ret = init_input_stream(i, error, sizeof(error))) < 0) {
+			for (i = 0; i < nb_output_streams; i++) {
+				ost = output_streams[i];
+				avcodec_close(ost->enc_ctx);
+			}
+			goto dump_format;
+		}
+	/* open each encoder */
+	for (i = 0; i < nb_output_streams; i++) {
+		ret = init_output_stream(output_streams[i], error, sizeof(error));
+		if (ret < 0)
+			goto dump_format;
+	}
+	/* write headers for files with no streams */
+	for (i = 0; i < nb_output_files; i++) {
+		oc = output_files[i]->ctx;
+		if (oc->oformat->flags & AVFMT_NOSTREAMS && oc->nb_streams == 0) {
+			ret = check_init_output_file(output_files[i], i);
+			if (ret < 0)
+				goto dump_format;
+		}
+	}
+dump_format:
+	ve_log(NULL, AV_LOG_INFO, "Stream mapping:\n");
+	ve_log(NULL, AV_LOG_INFO, "  Stream #%d:%d -> #%d:%d",
+		input_streams[ost->source_index]->file_index,
+		input_streams[ost->source_index]->st->index,
+		ost->file_index,
+		ost->index);
+	atomic_store(&transcode_init_done, 1);
+	return 0;
+}
 
 void transcode() 
 {
@@ -2443,30 +2493,29 @@ void transcode()
 	AVFormatContext *os;
 	OutputStream *ost;
 	char temp_buf[255] = { 0 };
+	ret = transcode_init();
 	while (1) {
 		ret = transcode_step();
 		if (ret < 0) break;
 	}
-	LOG_DEBUG("transcode end <=============\n");
+	ve_log(NULL, AV_LOG_INFO, "transcode end <=============\n");
 	/* write the trailer if needed and close file */
 	for (i = 0; i < nb_output_files; i++) {
 		os = output_files[i]->ctx;
 		if (!output_files[i]->header_written) {
-			sprintf(temp_buf,
+			ve_log(NULL, AV_LOG_INFO, 
 				"Nothing was written into output file %d (%s), because "
 				"at least one of its streams received no packets.\n",
 				i, os->filename);
-			LOG_DEBUG(temp_buf);
 			continue;
 		}
 		if ((ret = av_write_trailer(os)) < 0) {
-			sprintf(temp_buf, "Error writing trailer of %s: %s\n", os->filename, av_err2str(ret));
-			LOG_DEBUG(temp_buf);
+			ve_log(NULL, AV_LOG_ERROR, "Error writing trailer of %s: %s\n", os->filename, av_err2str(ret));
 			if (exit_on_error)
 				exit_program(1);
 		}
 	}
-	LOG_DEBUG("av_write_trailer end <=============\n");
+	ve_log(NULL, AV_LOG_INFO, "av_write_trailer end <=============\n");
 
 }
 /*
@@ -2478,12 +2527,12 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg, int64_t startTime, int64_t endTime, c
 	AVFormatContext *pifmt_ctx = NULL;
 	AVFormatContext *pofmt_ctx = NULL;
 	AVOutputFormat *pOutAVFmt = NULL;
-	int ret;
+	int ret=0;
 	int i;
 	int frame_cnt=0;
 	int isOpen = 0;
 	char temp_buf[255];
-	char error[1024] = { 0 };
+
 
 	pifmt_ctx = in_cvinfo.pifmt_ctx;
 	if (isOpen)
@@ -2501,12 +2550,7 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg, int64_t startTime, int64_t endTime, c
 	o.start_time = startTime;
 	o.stop_time = endTime;
 	open_output_file(&o, pDst);
-	for (i = 0; i < nb_input_streams; i++) {
-		init_input_stream(i);
-	}
-	for (i = 0; i < nb_output_streams; i++) {
-		ret = init_output_stream(output_streams[i], error, sizeof(error));
-	}
+
 
 	transcode();
 	exit_program(0);
@@ -2586,6 +2630,7 @@ void CMFC_ffmpeg_streamerDlg::OnOpenFile()
 	in_cvinfo.infile_name = m_file_path.GetBuffer(m_file_path.GetLength());
 	OpenInput();
 	SetWindowText(filePath);
+	//查询是否已在列表中
 	for (i = 0; i < m_playListCtrl.GetItemCount(); i++) {
 		lvitem.iItem = i;
 		lvitem.iSubItem = 0;
