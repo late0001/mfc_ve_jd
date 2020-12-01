@@ -1015,6 +1015,8 @@ typedef struct OutputStream {
 	AVRational frame_rate;
 	AVCodecParserContext *parser;
 	AVCodecContext       *parser_avctx;
+
+	int stream_copy;
 	// init_output_stream() has been called for this stream
 	// The encoder have been initialized and the stream
 	// parameters are set in the AVStream.
@@ -1666,7 +1668,7 @@ static OutputStream *new_output_stream(OptionsContext *o, AVFormatContext *oc, e
 
 	ost->enc_ctx = avcodec_alloc_context3(ost->enc);
 	ost->enc_ctx->codec_type = type;
-
+	ost->stream_copy = 1;// 后期再改
 	ost->ref_par = avcodec_parameters_alloc(); // 后面init_output_stream_streamcopy 用上再赋值
 	ost->source_index = source_index;
 	ost->last_mux_dts = AV_NOPTS_VALUE;
@@ -2247,7 +2249,7 @@ static int process_input_packet(InputStream *ist, const AVPacket *pkt, int no_eo
 		OutputStream *ost = output_streams[i];
 		if (!check_output_constraints(ist, ost)){
 			if (a3 == 673) {
-				ve_log(NULL, AV_LOG_INFO, "------------------\n");
+				ve_log(NULL, AV_LOG_INFO, "-----------------\n");
 			}
 			continue;
 		} else {
@@ -2478,11 +2480,16 @@ int transcode_init()
 	}
 dump_format:
 	ve_log(NULL, AV_LOG_INFO, "Stream mapping:\n");
-	ve_log(NULL, AV_LOG_INFO, "  Stream #%d:%d -> #%d:%d",
-		input_streams[ost->source_index]->file_index,
-		input_streams[ost->source_index]->st->index,
-		ost->file_index,
-		ost->index);
+	for (i = 0; i < nb_output_streams; i++) {
+		ost = output_streams[i];
+		ve_log(NULL, AV_LOG_INFO, "  Stream #%d:%d -> #%d:%d",
+			input_streams[ost->source_index]->file_index,
+			input_streams[ost->source_index]->st->index,
+			ost->file_index,
+			ost->index);
+		if (ost->stream_copy)
+			ve_log(NULL, AV_LOG_INFO, " (copy)");
+	}
 	atomic_store(&transcode_init_done, 1);
 	return 0;
 }
