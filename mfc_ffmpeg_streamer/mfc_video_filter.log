@@ -2,3 +2,4 @@ Device Info=============
 ========================
 avio_open error!
 avformat_write_header error!
+Cannot create buffer source

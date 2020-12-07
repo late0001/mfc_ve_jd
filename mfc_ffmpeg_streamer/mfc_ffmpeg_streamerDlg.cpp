@@ -2017,18 +2017,18 @@ static void write_packet(OutputFile *of, AVPacket *pkt, OutputStream *ost, int u
 			int64_t max = ost->last_mux_dts + !(s->oformat->flags & AVFMT_TS_NONSTRICT);
 			if (pkt->dts < max) {
 				int loglevel = max - pkt->dts > 2 || st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO ? AV_LOG_WARNING : AV_LOG_DEBUG;
-				sprintf(temp_buf, "Non-monotonous DTS in output stream "
+				ve_log(NULL, AV_LOG_INFO, "Non-monotonous DTS in output stream "
 					"%d:%d; previous: %lld, current: %lld; ",
 					ost->file_index, ost->st->index, ost->last_mux_dts, pkt->dts);
-				LOG_DEBUG(temp_buf);
+				
 				if (exit_on_error) {
-					LOG_DEBUG("aborting.\n");
+					ve_log(NULL, AV_LOG_INFO, "aborting.\n");
 					exit_program(1);
 				}
-				sprintf(temp_buf, "changing to %lld. This may result "
+				ve_log(NULL, AV_LOG_INFO, "changing to %lld. This may result "
 					"in incorrect timestamps in the output file.\n",
 					max);
-				LOG_DEBUG(temp_buf);
+				
 				if (pkt->pts >= pkt->dts)
 					pkt->pts = FFMAX(pkt->pts, max);
 				pkt->dts = max;
@@ -2156,9 +2156,9 @@ static int check_output_constraints(InputStream *ist, OutputStream *ost)
 	char ts_buf[AV_TS_MAX_STRING_SIZE]={0};
 	OutputFile *of = output_files[ost->file_index];
 	int ist_index = input_files[ist->file_index]->ist_index + ist->st->index;
-	sprintf(temp_buf, "qjd  %s(%d) +++++++++++++  >>> a3=%d [ist_index=%d] ist->pts=%" PRId64 "\n" /*", ist->pts=%s\n"*/,
+	ve_log(NULL, AV_LOG_INFO, "qjd  %s(%d) +++++++++++++  >>> a3=%d [ist_index=%d] ist->pts=%" PRId64 "\n" /*", ist->pts=%s\n"*/,
 		__func__, __LINE__, a3, ist_index, ist->pts/*, av_ts_make_string(ts_buf, ist->pts)*/);
-	LOG_DEBUG(temp_buf);
+	
 	if (ost->source_index != ist_index)
 		return 0;
 
@@ -2413,7 +2413,7 @@ static OutputStream *choose_output(void)
 		//	a3, ost->st->cur_dts, i);
 		if(ost->st->cur_dts == AV_NOPTS_VALUE){
 			//FixMe
-			//ve_log(NULL, AV_LOG_INFO,"cur_dts is invalid (this is harmless if it occurs once at the start per stream)\n");
+			ve_log(NULL, AV_LOG_INFO,"cur_dts is invalid (this is harmless if it occurs once at the start per stream)\n");
 		}
 		if (!ost->initialized) {
 			return ost;
@@ -2435,13 +2435,13 @@ static int transcode_step(void)
 	a3++;
 	ost = choose_output();
 	if (!ost) {
-		av_log(NULL, AV_LOG_ERROR, "qjd  %s(%d) >>>>>>>>>>>>>>>>>>>\n", __func__, __LINE__);
+		ve_log(NULL, AV_LOG_ERROR, "qjd  %s(%d) >>>>>>>>>>>>>>>>>>>\n", __func__, __LINE__);
 		/*if (got_eagain()) {
 			reset_eagain();
 			av_usleep(10000);
 			return 0;
 		}*/
-		av_log(NULL, AV_LOG_VERBOSE, "No more inputs to read from, finishing.\n");
+		ve_log(NULL, AV_LOG_VERBOSE, "No more inputs to read from, finishing.\n");
 		return AVERROR_EOF;
 	}
 	ist = input_streams[ost->source_index];
@@ -2488,7 +2488,7 @@ dump_format:
 			ost->file_index,
 			ost->index);
 		if (ost->stream_copy)
-			ve_log(NULL, AV_LOG_INFO, " (copy)");
+			ve_log(NULL, AV_LOG_INFO, " (copy)\n");
 	}
 	atomic_store(&transcode_init_done, 1);
 	return 0;
