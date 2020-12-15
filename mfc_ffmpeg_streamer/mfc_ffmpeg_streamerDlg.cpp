@@ -2,6 +2,7 @@
 // mfc_ffmpeg_video_filterDlg.cpp : 实现文件
 //
 
+
 #include "stdafx.h"
 #include <stdio.h>
 #include "mfc_ffmpeg_streamer.h"
@@ -9,6 +10,9 @@
 #include "afxdialogex.h"
 #include "ConcatDialog.h"
 #include "compat/atomics/win32/stdatomic.h"
+
+#define FUNC_ENTER ve_log(NULL, AV_LOG_FATAL, " %s ====> \n", __func__)
+#define FUNC_EXIT  ve_log(NULL, AV_LOG_FATAL, " %s <==== \n", __func__)
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -95,6 +99,12 @@ static UINT indicators[] = {
 	IDS_INDICATOR_TIME
 };
 
+struct movclip_info {
+	int64_t start_time;
+	int64_t end_time;
+	char sv_filepath[MAX_PATH];
+} movclip;
+
 HWND ghWnd = NULL;
 // CMFC_ffmpeg_video_filterDlg 消息处理程序
 
@@ -145,6 +155,9 @@ BOOL CMFC_ffmpeg_streamerDlg::OnInitDialog()
 	// list control
 	m_playListCtrl.InsertColumn(0, "File", LVCFMT_LEFT, 200);//插入列
 	m_playListCtrl.InsertColumn(1, "Time", LVCFMT_LEFT, 50);
+	CString filePath = "C:\\mov\\bin\\test.mov"; // FixMe
+	SetDlgItemText(IDC_EDIT_SAVEFILE, filePath);
+	strcpy(movclip.sv_filepath, filePath.GetBuffer(filePath.GetLength()));
 	//m_playListCtrl.InsertItem(0, "hello", 0);
 	// SDL initialization 
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER)) {
@@ -980,11 +993,7 @@ struct cvinfo {
 	int64_t seek_pos;
 } in_cvinfo;
 
-struct movclip_info {
-	int64_t start_time;
-	int64_t end_time;
-	char sv_filepath[MAX_PATH];
-} movclip;
+
 
 typedef struct OptionsContext {
 	AVDictionary *format_opts;
@@ -1291,11 +1300,12 @@ void add_input_streams(AVFormatContext *ic)
 	}
 	
 }
-int open_input_file(const char *filename) 
+int open_input_file(OptionsContext *o, const char *filename)
 {
 	InputFile *f;
 	AVFormatContext *ic;
 	int err,i, ret;
+	int64_t timestamp;
 	char temp_buf[255];
 
 	ic = avformat_alloc_context();
@@ -1321,6 +1331,15 @@ int open_input_file(const char *filename)
 		if (ic->nb_streams == 0) {
 			avformat_close_input(&ic);
 			return -1;
+		}
+	}
+	timestamp = (o->start_time == AV_NOPTS_VALUE) ? 0 : o->start_time;
+	if (o->start_time != AV_NOPTS_VALUE) {
+		int64_t seek_timestamp = timestamp;
+		ret = avformat_seek_file(ic, -1, INT64_MIN, seek_timestamp, seek_timestamp, 0);
+		if (ret < 0) {
+			av_log(NULL, AV_LOG_WARNING, "%s: could not seek to position %0.3f\n",
+				filename, (double)timestamp / AV_TIME_BASE);
 		}
 	}
 	add_input_streams(ic);
@@ -1391,8 +1410,8 @@ int open_input_file2(const char *filename)
 		}
 	}*/
 	if (in_cvinfo.videoindex == -1) {
-		sprintf(temp_buf, "Didn't find a video stream.\n");
-		OutputDebugString(temp_buf);
+		ve_log(NULL, AV_LOG_ERROR, "Didn't find a video stream.\n");
+	
 	}
 
 	av_dump_format(ic, 0, filename, 0);
@@ -2075,6 +2094,8 @@ static int do_streamcopy(InputStream *ist, OutputStream *ost, const AVPacket *pk
 	int64_t ost_tb_start_time = av_rescale_q(start_time, AV_TIME_BASE_Q1, ost->mux_timebase);
 	AVPacket opkt;
 	char temp_buf[255];
+
+	FUNC_ENTER;
 	av_init_packet(&opkt);
 
 	if ((!ost->frame_number && !(pkt->flags & AV_PKT_FLAG_KEY)))
@@ -2085,7 +2106,8 @@ static int do_streamcopy(InputStream *ist, OutputStream *ost, const AVPacket *pk
 		close_output_stream(ost);
 		return -1;
 	}
-
+	ve_log(NULL, AV_LOG_FATAL, "ddd  pkt->dts: %" PRId64 " pkt->pts: %" PRId64 "\n",
+		pkt->dts, pkt->pts);
 	/* force the input stream PTS */
 
 	if (pkt->pts != AV_NOPTS_VALUE)
@@ -2142,7 +2164,11 @@ static int do_streamcopy(InputStream *ist, OutputStream *ost, const AVPacket *pk
 
 	av_copy_packet_side_data(&opkt, pkt);
 
+	ve_log(NULL, AV_LOG_FATAL, "ddd  opkt->dts: %" PRId64 " opkt->pts: %" PRId64 "\n",
+		opkt.dts, opkt.pts);
+
 	output_packet(of, &opkt, ost);
+	FUNC_EXIT;
 	return 0;
 }
 static int a3 = 0;
@@ -2167,7 +2193,9 @@ static int check_output_constraints(InputStream *ist, OutputStream *ost)
 
 	if (of->start_time != AV_NOPTS_VALUE && ist->pts < of->start_time)
 		return 0;
-
+	ve_log(NULL, AV_LOG_FATAL, "ddd copystart ist->pts: %I64d\n of->start_time: %I64d\n",
+		ist->pts,
+		of->start_time);
 	return 1;
 }
 
@@ -2535,10 +2563,9 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg, int64_t startTime, int64_t endTime, c
 	AVFormatContext *pofmt_ctx = NULL;
 	AVOutputFormat *pOutAVFmt = NULL;
 	int ret=0;
-	int i;
+//	int i;
 	int frame_cnt=0;
 	int isOpen = 0;
-	char temp_buf[255];
 
 
 	pifmt_ctx = in_cvinfo.pifmt_ctx;
@@ -2552,10 +2579,11 @@ int cutVideo(CMFC_ffmpeg_streamerDlg *dlg, int64_t startTime, int64_t endTime, c
 		avformat_free_context(pofmt_ctx);
 
 	register_exit(ffmpeg_cleanup);
-	open_input_file(pSrc);
 	init_options(&o);
 	o.start_time = startTime;
 	o.stop_time = endTime;
+	open_input_file(&o, pSrc);
+	o.start_time = AV_NOPTS_VALUE;
 	open_output_file(&o, pDst);
 
 
