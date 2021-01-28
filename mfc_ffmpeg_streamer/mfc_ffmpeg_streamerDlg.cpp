@@ -599,7 +599,7 @@ int getcapdev_push_streamer(CMFC_ffmpeg_streamerDlg *pdlg)
 	//获取一个AVPacket（Get an AVPacket）
 	while (av_read_frame(ifmt_ctx, dec_pkt) >= 0) {
 		if (exit_thraad != 0) break;
-		av_log(NULL, AV_LOG_DEBUG, "Going to reencode the frame\n");
+		ve_log(NULL, AV_LOG_DEBUG, "Going to reencode the frame\n");
 		pFrame = av_frame_alloc();
 		if (!pFrame) {
 			ret = AVERROR(ENOMEM);
@@ -996,6 +996,7 @@ struct cvinfo {
 
 
 typedef struct OptionsContext {
+	const char *format;
 	AVDictionary *format_opts;
 	int64_t start_time;
 	int64_t recording_time;
@@ -1118,7 +1119,7 @@ void *grow_array(void *array, int elem_size, int *size, int new_size)
 {
 	uint8_t *tmp = NULL;
 	if (new_size >= INT_MAX / elem_size) {
-		av_log(NULL, AV_LOG_ERROR, "Array too big.\n");
+		ve_log(NULL, AV_LOG_ERROR, "Array too big.\n");
 		exit_program(1);
 		return NULL;
 	}
@@ -1126,7 +1127,7 @@ void *grow_array(void *array, int elem_size, int *size, int new_size)
 		 tmp = (uint8_t *)av_realloc_array(array, new_size, elem_size);
 		//tmp = (uint8_t *)realloc(array, new_size * elem_size + !(new_size * elem_size));
 		if (!tmp) {
-			av_log(NULL, AV_LOG_ERROR, "Could not alloc buffer.\n");
+			ve_log(NULL, AV_LOG_ERROR, "Could not alloc buffer.\n");
 			exit_program(1);
 			return NULL;
 		}
@@ -1307,15 +1308,27 @@ int open_input_file(OptionsContext *o, const char *filename)
 	int err,i, ret;
 	int64_t timestamp;
 	char temp_buf[255];
+	AVInputFormat *file_iformat = NULL;
+
+	if (o->format) {
+		if (!(file_iformat = av_find_input_format(o->format))) {
+			ve_log(NULL, AV_LOG_FATAL, "Unknown input format: '%s'\n", o->format);
+			exit_program(1);
+		}
+		ve_log(NULL, AV_LOG_FATAL, "input format: '%s'\n", file_iformat->name);
+	}
 
 	ic = avformat_alloc_context();
 	if (!ic) {
-		OutputDebugString(" avformat_alloc_context error, ENOMEM");
+		ve_log(NULL, AV_LOG_DEBUG," avformat_alloc_context error, ENOMEM");
 		return -1;
 	}
-	err = avformat_open_input(&ic, filename, 0, 0);
+	/* open the input file with generic avformat function */
+	err = avformat_open_input(&ic, filename, file_iformat, 0);
+	//err = avformat_open_input(&ic, filename, 0, 0);
 	if (err < 0) {
-		sprintf(temp_buf, "avformat_open_input error!\n");
+		sprintf(temp_buf, "avformat_open_input error %d!\n", err);
+		ve_log(NULL, AV_LOG_DEBUG, temp_buf);
 		AfxMessageBox(temp_buf);
 		return err;
 	}
@@ -1326,7 +1339,7 @@ int open_input_file(OptionsContext *o, const char *filename)
 	ret = avformat_find_stream_info(ic, NULL);
 	if (ret < 0) {
 		sprintf(temp_buf, "%s: could not find codec parameters\n", filename);
-		OutputDebugString(temp_buf);
+		ve_log(NULL, AV_LOG_DEBUG, temp_buf);
 		AfxMessageBox(temp_buf);
 		if (ic->nb_streams == 0) {
 			avformat_close_input(&ic);
@@ -1338,7 +1351,7 @@ int open_input_file(OptionsContext *o, const char *filename)
 		int64_t seek_timestamp = timestamp;
 		ret = avformat_seek_file(ic, -1, INT64_MIN, seek_timestamp, seek_timestamp, 0);
 		if (ret < 0) {
-			av_log(NULL, AV_LOG_WARNING, "%s: could not seek to position %0.3f\n",
+			ve_log(NULL, AV_LOG_WARNING, "%s: could not seek to position %0.3f\n",
 				filename, (double)timestamp / AV_TIME_BASE);
 		}
 	}
@@ -1347,7 +1360,7 @@ int open_input_file(OptionsContext *o, const char *filename)
 	input_files = (InputFile **)GROW_ARRAY(input_files, nb_input_files);
 	f = (InputFile *)av_mallocz(sizeof(*f));
 	if (!f) {
-		OutputDebugString("insufficient memory, InputFile f not be allocate!\n");
+		ve_log(NULL, AV_LOG_DEBUG, "insufficient memory, InputFile f not be allocate!\n");
 		return -1;
 	}
 	input_files[nb_input_files - 1] = f;
@@ -1370,12 +1383,13 @@ int open_input_file2(const char *filename)
 
 	ic = avformat_alloc_context();
 	if (!ic) {
-		OutputDebugString(" avformat_alloc_context error, ENOMEM");
+		ve_log(NULL, AV_LOG_DEBUG, " avformat_alloc_context error, ENOMEM");
 		return -1;
 	}
 	err = avformat_open_input(&ic, filename, 0, 0);
 	if (err < 0) {
 		sprintf(temp_buf, "avformat_open_input error!\n");
+		ve_log(NULL, AV_LOG_DEBUG, temp_buf);
 		AfxMessageBox(temp_buf);
 		return err;
 	}
@@ -1386,7 +1400,7 @@ int open_input_file2(const char *filename)
 	ret = avformat_find_stream_info(ic, NULL);
 	if (ret < 0) {
 		sprintf(temp_buf, "%s: could not find codec parameters\n", filename);
-		OutputDebugString(temp_buf);
+		ve_log(NULL, AV_LOG_DEBUG, temp_buf);
 		AfxMessageBox(temp_buf);
 		if (ic->nb_streams == 0) {
 			avformat_close_input(&ic);
@@ -1664,6 +1678,7 @@ static void init_options(OptionsContext *o)
 	o->stop_time = INT64_MAX;
 	o->start_time = AV_NOPTS_VALUE;
 	o->recording_time = INT64_MAX;
+	o->format = NULL;
 }
 static OutputStream *new_output_stream(OptionsContext *o, AVFormatContext *oc, enum AVMediaType type, int source_index)
 {
@@ -2062,7 +2077,7 @@ static void write_packet(OutputFile *of, AVPacket *pkt, OutputStream *ost, int u
 	pkt->stream_index = ost->index;
 
 /*	if (debug_ts) {
-		av_log(NULL, AV_LOG_INFO, "muxer <- type:%s "
+		ve_log(NULL, AV_LOG_INFO, "muxer <- type:%s "
 			"pkt_pts:%s pkt_pts_time:%s pkt_dts:%s pkt_dts_time:%s size:%d\n",
 			av_get_media_type_string(ost->enc_ctx->codec_type),
 			av_ts2str(pkt->pts), av_ts2timestr(pkt->pts, &ost->st->time_base),
@@ -2961,12 +2976,50 @@ void CMFC_ffmpeg_streamerDlg::OnClickedBtnSave()
 	strcpy(movclip.sv_filepath, filePath.GetBuffer(filePath.GetLength()));
 }
 
+int concatVideo(CMFC_ffmpeg_streamerDlg *dlg,  const char *pSrc, const char *pDst)
+{
+	OptionsContext o;
+	AVFormatContext *pifmt_ctx = NULL;
+	AVFormatContext *pofmt_ctx = NULL;
+	AVOutputFormat *pOutAVFmt = NULL;
+	int ret = 0;
+	//	int i;
+	int frame_cnt = 0;
+	int isOpen = 0;
+
+	const char *format = "concat";
+	pifmt_ctx = in_cvinfo.pifmt_ctx;
+#if 0
+	if (isOpen)
+		avio_closep(&pofmt_ctx->pb);
+
+	if (pifmt_ctx)
+		avformat_close_input(&pifmt_ctx);
+
+	if (pofmt_ctx)
+		avformat_free_context(pofmt_ctx);
+#endif
+	register_exit(ffmpeg_cleanup);
+	init_options(&o);
+	o.format = format;
+	open_input_file(&o, pSrc);
+	o.start_time = AV_NOPTS_VALUE;
+	open_output_file(&o, pDst);
+	
+
+	transcode();
+	exit_program(0);
+	return ret;
+}
 
 void CMFC_ffmpeg_streamerDlg::OnBnClickedBtnCon()
 {
 	// TODO: 在此添加控件通知处理程序代码
+#if 0
 	CConcatDlg *dlg = new CConcatDlg();
 	//dlg->DoModal();
 	dlg->Create(IDD_CONCAT);
 	dlg->ShowWindow(SW_SHOW);
+#endif 
+	concatVideo(this, "filelist.txt", "3.mp4");
 }

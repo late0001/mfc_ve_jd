@@ -202,7 +202,7 @@ void CConcatDlg::OnMoveDown() //ÏÂÒÆ¶¯ ²Ëµ¥
 
 }
 
-int concatVideo(/*CMFC_ffmpeg_streamerDlg *dlg ,*/ int startTime, int endTime, const char *pSrc, const char *pSrc1, const char *pDst)
+int concatVideo(/*CMFC_ffmpeg_streamerDlg *dlg  int startTime,*/ int endTime, const char *pSrc, const char *pSrc1, const char *pDst)
 {
 	AVFormatContext *pifmt_ctx = NULL;
 	AVFormatContext *pofmt_ctx = NULL;
